@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "productName": "Zero Studio",
+  "version": "0.1.0",
+  "identifier": "com.zero.studio",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Zero Studio",
+        "width": 800,
+        "height": 600
+      }
+    ]
+  }
+}

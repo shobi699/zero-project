@@ -1,0 +1,35 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+.nest/
+
+# Tauri
+zero-studio/src-tauri/target/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Benchmark corpus audio (large files, not tracked)
+tools/stt-bench/corpus/*.wav
+
+# Build artifacts
+*.exe
+*.dll
+*.pdb
