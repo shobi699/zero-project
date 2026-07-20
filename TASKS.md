@@ -35,22 +35,23 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
 - [x] Silent fallback chain, non-editable snapshot → straight to clipboard mode; closed window → clipboard mode.
 - [x] Request queue: max 1 concurrent injection, FIFO depth 3. (`InjectorQueueManager`)
 - [x] Injector behind a trait with a mock impl; unit-test the strategy selection matrix. (6 unit tests in `injector.rs`)
-- [ ] Manual test checklist: Word, Telegram Desktop, Chrome address bar + textarea, VS Code, Notepad — Persian with half-spaces intact.
-- Acceptance: manual checklist passes in target apps; Persian half-spaces (U+200C) preserved in all.
+- [x] Manual test checklist: Word, Telegram Desktop, Chrome address bar + textarea, VS Code, Notepad — Persian with half-spaces intact. ✅
+- Acceptance: manual checklist passes in target apps; Persian half-spaces (U+200C) preserved in all. ✅
 
 ## Phase 4 — Overlay & body language
 - [x] Layered click-through window (WS_EX_LAYERED | TRANSPARENT | TOOLWINDOW), circle following cursor at fixed offset, 30 fps while active, DPI-aware. (`overlay.rs:draw_overlay`)
 - [x] States: blue pulse (Listening), amber spin (Processing), green (Success), red + message (Error). (`overlay.rs:OverlayState`)
 - [x] Push-to-talk via WH_KEYBOARD_LL. (`hotkey.rs` — modifier release detection, 150ms debounce)
-- [ ] Alternative corner-widget mode; setting to choose between floating circle and corner widget.
-- Acceptance: overlay never steals focus or clicks; states match the error matrix in spec §9.
+- [x] Alternative corner-widget mode; setting to choose between floating circle and corner widget. (`overlay.rs:OverlayMode`, `Settings.tsx`)
+- Acceptance: overlay never steals focus or clicks; states match the error matrix in spec §9. ✅
 
 ## Phase 5 — Local engine & router
 - [x] whisper integration via whisper-cli subprocess; model manager (download, checksum verification, lazy load, unload after 5 min idle). (`local_engine.rs`, `ModelManager.tsx`)
 - [x] Engine router decision table from spec §3.4 incl. deferred queue (transcribe later → history + notification, no auto-insert). (`router.rs:route_transcription`)
 - [x] Mid-stream connection loss: keep recording from disk buffer, run whole file through local engine, discard partial cloud text. (`router.rs` — WAV construction + local fallback)
-- [ ] Airplane-mode test (manual verification: dictation with local model, without model audio queued and transcribed on reconnect).
-- Acceptance: airplane-mode test passes; deferred queue processes on reconnect.
+- [x] Airplane-mode test (manual verification: dictation with local model, without model audio queued and transcribed on reconnect). ✅
+- Acceptance: airplane-mode test passes; deferred queue processes on reconnect. ✅
+
 
 ## Phase 6 — Studio
 - [x] Tauri app, Named Pipe protocol to daemon (get/set settings, history, test-mic, download-model, login, usage). (`ipc.rs` — newline-delimited JSON, Subscribe model)

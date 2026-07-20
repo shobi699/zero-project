@@ -4,3 +4,8 @@ members = [
     "zero-daemon",
     "tools/stt-bench",
 ]
+# zero-studio/src-tauri is intentionally NOT a workspace member (see CLAUDE.md):
+# Tauri manages its own cargo build.
+exclude = [
+    "zero-studio/src-tauri",
+]

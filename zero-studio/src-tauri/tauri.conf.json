@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.zero.studio",
   "build": {
-    "frontendDist": "../src"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
   },
   "app": {
     "windows": [
@@ -13,6 +16,32 @@
         "width": 800,
         "height": 600
       }
-    ]
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../../target/release/zero-daemon.exe"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": true,
+        "languages": ["English"]
+      }
+    },
+    "category": "Productivity",
+    "shortDescription": "System-wide Persian voice input for Windows",
+    "longDescription": "Zero is a system-wide voice input layer for Windows. Press a hotkey anywhere, speak, and transcribed text is inserted at the cursor."
   }
 }

@@ -1,0 +1,68 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  otpCode      String?
+  otpExpiry    DateTime?
+  otpAttempts  Int         @default(0)
+  role         String      @default("user") // "user" or "admin"
+  subscription String      @default("free") // "free" or "smart"
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  usageLogs    UsageLog[]
+}
+
+model SttProvider {
+  id             String   @id @default(uuid())
+  name           String   @unique // e.g. "whisper-api", "google-stt", "azure-stt", "dummy"
+  isEnabled      Boolean  @default(true)
+  priority       Int      @default(0) // Higher value means higher priority/preference
+  costPerMinute  Float    @default(0.0)
+  successCount   Int      @default(0)
+  failureCount   Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Setting {
+  key          String   @id // e.g. "quota.free.monthly_limit_sec"
+  label        String
+  description  String?
+  type         String   // "number" | "text" | "boolean" | "color" | "select"
+  value        String   // Serialized value
+  defaultValue String
+  isEnabled    Boolean  @default(true)
+  min          Float?
+  max          Float?
+  options      String?  // Comma-separated options for select type
+  category     String   // e.g. "STT", "Quota", "General"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model UsageLog {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String   // e.g. "whisper-api"
+  durationSec Float
+  cost        Float
+  status      String   // "SUCCESS" or "ERROR"
+  latencyMs   Int
+  createdAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  details   String
+  createdAt DateTime @default(now())
+}

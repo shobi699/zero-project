@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: zero-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zero
+      POSTGRES_PASSWORD: zero
+      POSTGRES_DB: zero
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zero"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: zero-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: ./zero-server
+      dockerfile: Dockerfile
+    container_name: zero-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATABASE_URL: "postgresql://zero:zero@postgres:5432/zero?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: "zero-secret-access-key-change-in-production"
+      JWT_REFRESH_SECRET: "zero-secret-refresh-key-change-in-production"
+      ADMIN_EMAILS: ""
+      OPENAI_API_KEY: "mock-openai-key-or-real"
+      GOOGLE_API_KEY: "mock-google-key-or-real"
+      AZURE_STT_KEY: "mock-azure-key-or-real"
+      AZURE_STT_REGION: "eastus"
+
+volumes:
+  pgdata:
+  redisdata:

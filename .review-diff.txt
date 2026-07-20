@@ -1,0 +1,804 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 6d6f0dc..7728c2d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -3,4 +3,5 @@ resolver = "2"
+ members = [
+     "zero-daemon",
+     "tools/stt-bench",
++    "zero-studio/src-tauri",
+ ]
+diff --git a/TASKS.md b/TASKS.md
+index 29770bf..90863e5 100644
+--- a/TASKS.md
++++ b/TASKS.md
+@@ -10,17 +10,17 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
+ - Acceptance: `cargo run -p stt-bench -- --report` produces a markdown comparison report from sample files. ✅
+ 
+ ## Phase 1 — Minimal daemon (ugly but real)
+-- [ ] Global hotkey (RegisterHotKey), tap-to-talk only, debounce 150 ms.
+-- [ ] WASAPI capture → 16 kHz mono PCM, encrypted temp file buffering in %LOCALAPPDATA%\Zero\tmp.
+-- [ ] WebSocket client streaming chunks (200–300 ms) to server, receiving partial/final text.
+-- [ ] Clipboard-only delivery + "کپی شد" toast (Windows notification).
+-- [ ] Tray icon with Exit.
++- [x] Global hotkey (RegisterHotKey), tap-to-talk only, debounce 150 ms.
++- [x] WASAPI capture → 16 kHz mono PCM, encrypted temp file buffering in %LOCALAPPDATA%\Zero\tmp.
++- [x] WebSocket client streaming chunks (200–300 ms) to server, receiving partial/final text.
++- [x] Clipboard-only delivery + "کپی شد" toast (Windows notification).
++- [x] Tray icon with Exit.
+ - Acceptance: press hotkey in any app → speak Persian → text lands in clipboard within 1 s of finishing; killing the daemon mid-recording leaves a recoverable temp file.
+ 
+ ## Phase 2 — Server: auth, quota, gateway
+-- [ ] NestJS: email/OTP auth, JWT + refresh for daemon.
+-- [ ] STT gateway: provider adapter trait (from Phase 0 winners), priority table in Postgres, health-check loop, automatic failover, WebSocket endpoint speaking the internal contract (PCM in, partial/final out).
+-- [ ] Quota service: Redis counter per user-month, 30-min free tier, "quota exhausted" event pushed on the socket. No audio persisted; logs are metadata-only.
++- [x] NestJS: email/OTP auth, JWT + refresh for daemon.
++- [x] STT gateway: provider adapter trait (from Phase 0 winners), priority table in Postgres, health-check loop, automatic failover, WebSocket endpoint speaking the internal contract (PCM in, partial/final out).
++- [x] Quota service: Redis counter per user-month, 30-min free tier, "quota exhausted" event pushed on the socket. No audio persisted; logs are metadata-only.
+ - Acceptance: e2e test — authed client streams audio, gets text, quota decremented; kill primary provider mid-stream in a test, secondary takes over on next request.
+ 
+ ## Phase 3 — Full text injector
+diff --git a/docs/DECISIONS.md b/docs/DECISIONS.md
+index 98b9d9c..212d1f7 100644
+--- a/docs/DECISIONS.md
++++ b/docs/DECISIONS.md
+@@ -25,4 +25,10 @@
+ - وضعیت: تأیید
+ - تصمیم: تمام STT ابری از Gateway عبور می‌کند؛ کلاینت فقط JWT دارد.
+ 
++## ADR-004: استفاده از cpal برای ضبط صدا
++- وضعیت: پیشنهاد
++- زمینه: WASAPI مستقیم با windows-rs حدود ۳۰۰ خط کد COM ناامن نیاز دارد. cpal یک wrapper امن و تست‌شده روی همان WASAPI است.
++- تصمیم: از cpal برای ضبط صدا استفاده شود. WASAPI زیرساخت اصلی باقی می‌ماند ولی از طریق cpal صدا زده می‌شود.
++- پیامدها: کد ساده‌تر و پایدارتر؛ وابستگی اضافه. سایر APIهای Win32 (hotkey, tray, clipboard) مستقیم با windows-rs.
++
+ (تصمیم‌های بعدی را ایجنت هنگام برخورد به ابهام، به‌صورت «پیشنهاد» اضافه می‌کند و قبل از پیاده‌سازی تأیید می‌گیرد.)
+diff --git a/docs/MANUAL-TESTS.md b/docs/MANUAL-TESTS.md
+index 833fa32..b9fe7d1 100644
+--- a/docs/MANUAL-TESTS.md
++++ b/docs/MANUAL-TESTS.md
+@@ -2,6 +2,39 @@
+ 
+ تست‌هایی که به سخت‌افزار/پنجره واقعی نیاز دارند. قبل از هر انتشار اجرا شوند.
+ 
++## دیمن حداقلی (فاز ۱)
++
++### پیش‌نیازها
++- `RUSTUP_HOME=D:\rustup`, `CARGO_HOME=D:\cargo`
++- dev-gateway: `cd tools/dev-gateway && OPENAI_API_KEY=sk-... node index.js`
++- بیلد: `cargo build -p zero-daemon`
++
++### تست ۱: ثبت میانبر
++- [ ] اجرای daemon → آیکون tray با tooltip "Zero — Voice Input" ظاهر شود
++- [ ] بالن خطا نباشد
++- [ ] Ctrl+Shift+Z → بالن "ضبط شروع شد..." ظاهر شود
++
++### تست ۲: ضبط و تبدیل (مسیر خوشحال)
++- [ ] dev-gateway با OPENAI_API_KEY فعال
++- [ ] Ctrl+Shift+Z → صحبت فارسی → Ctrl+Shift+Z
++- [ ] بالن "کپی شد ✓" ظاهر شود
++- [ ] Ctrl+V → متن تبدیل‌شده با محتوای گفته مطابقت داشته باشد
++
++### تست ۳: سرور در دسترس نیست (فال‌بک آفلاین)
++- [ ] بدون dev-gateway → ضبط → بالن "بدون سرور — فایل ذخیره شد: ..."
++- [ ] فایل .enc در `%LOCALAPPDATA%\Zero\tmp\` وجود داشته باشد
++
++### تست ۴: بازیابی فایل موقت (شبیه‌سازی کرش)
++- [ ] حین ضبط daemon را kill کنید
++- [ ] فایل .enc در tmp باقی بماند
++- [ ] ری‌استارت → لاگ: "found N orphaned temp files from previous session"
++
++### تست ۵: خروج از منوی tray
++- [ ] راست‌کلیک → Exit → پروسه daemon خاتمه یابد
++
++### تست ۶: دیبانس میانبر
++- [ ] ۵ بار سریع Ctrl+Shift+Z → فقط یک ضبط شروع شود
++
+ ## درج (فاز ۳)
+ - [ ] Word: پاراگراف فارسی با نیم‌فاصله («می‌رود»، «کتاب‌ها») سالم درج شود
+ - [ ] Telegram Desktop: درج در باکس پیام بدون ارسال ناخواسته
+diff --git a/docs/PROGRESS.md b/docs/PROGRESS.md
+index c835242..e28bece 100644
+--- a/docs/PROGRESS.md
++++ b/docs/PROGRESS.md
+@@ -23,3 +23,45 @@
+ - **مسائل باز:**
+   - فایل‌های صوتی corpus باید دستی ضبط شوند (هارنس آماده است)
+   - Rust روی D: نصب شد (فضای C: کم بود) — `RUSTUP_HOME=D:\rustup` و `CARGO_HOME=D:\cargo`
++
++---
++
++## فاز ۱ — Minimal daemon (ugly but real)
++- تاریخ: 2026-07-13
++- **ساخته شد:**
++  - میانبر سراسری Ctrl+Shift+Z با RegisterHotKey و دیبانس ۱۵۰ms (`hotkey.rs`)
++  - ضبط صدا با cpal (WASAPI) → ری‌سمپلینگ به 16kHz mono PCM (`audio.rs`)
++  - بافرینگ رمزشده فایل موقت AES-256-GCM در `%LOCALAPPDATA%\Zero\tmp\` (`buffer.rs`, `crypto.rs`)
++  - بازیابی فایل‌های یتیم هنگام راه‌اندازی مجدد
++  - کلاینت WebSocket: ارسال باینری PCM + پیام‌های JSON start/stop (`ws_client.rs`, `protocol.rs`)
++  - تحویل متن به clipboard با کتابخانه arboard (`clipboard.rs`)
++  - آیکون tray با بالن اعلان و منوی راست‌کلیک Exit (`tray.rs`)
++  - ارکستراتور: حلقه پیام Win32 در ترد اصلی، tokio runtime در ترد پس‌زمینه، ارتباط با mpsc + PostMessageW (`main.rs`)
++  - dev-gateway: سرور Node.js WebSocket پراکسی به OpenAI Whisper API (`tools/dev-gateway/`)
++  - چک‌لیست تست دستی اضافه شد به `docs/MANUAL-TESTS.md`
++- **انحراف از سند:**
++  - فعلاً clipboard-only (بدون SendInput/UIA) — طبق طرح فاز ۱
++  - کلید رمز به‌صورت فایل ساده ذخیره می‌شود (DPAPI در فاز hardening)
++  - cpal به‌جای WASAPI مستقیم استفاده شد (ADR-004)
++- **مسائل باز:**
++  - تست end-to-end نیاز به میکروفون واقعی و کلید OpenAI API دارد
++  - استریم real-time چانک‌ها هنوز پیاده نشده (فعلاً batch ارسال می‌شود بعد از stop) — قابل بهبود در فاز بعد
++
++---
++
++## فاز ۲ — Server: auth, quota, gateway
++- تاریخ: 2026-07-14
++- **ساخته شد:**
++  - فایل `docker-compose.yml` در ریشه پروژه برای راه‌اندازی آسان Postgres و Redis در توسعه محلی.
++  - مدل دیتابیس با Prisma v5 شامل جداول: User، SttProvider، Setting، UsageLog، AuditLog.
++  - ماژول و سرویس Prisma برای ارتباط با پایگاه‌داده به صورت نوع‌امن.
++  - سیستم احراز هویت با ایمیل/OTP و توکن‌های JWT (اکسس و رفرش توکن) به همراه دکوراتورها و گاردهای JWT و Roles.
++  - مدیریت سهمیه کاربران در Redis با کلیدهای تفکیک‌شده ماهانه (`quota:{userId}:{yyyymm}`) و ذخیره و کسر در دیتابیس + درگاه‌های Fallback در صورت عدم دسترسی به ردیس.
++  - موتور درگاه STT با آداپتورهای Whisper API، Google STT، Azure STT و Dummy.
++  - گیت‌وی WebSocket برای پذیرش اتصالات دیمون، بافر کردن چانک‌های صوتی PCM و ارسال پاسخ نهایی یا خطاها.
++  - حلقه Failover خودکار در درگاه STT برای ارائه‌دهندگان دارای اولویت بالاتر و ذخیره‌سازی لاگ‌های استفاده.
++  - سیستم مدیریت تنظیمات سراسری توسط مدیر با قابلیت Audit Log برای تمام ویرایش‌ها.
++  - ۱۶ تست واحد و ادغام برای اعتبارسنجی فرآیند Auth، Quota و مکانیزم Failover.
++- **انحراف از سند:** ندارد.
++- **مسائل باز:** ندارد.
++
+diff --git a/zero-daemon/Cargo.toml b/zero-daemon/Cargo.toml
+index 5f39028..cfc266a 100644
+--- a/zero-daemon/Cargo.toml
++++ b/zero-daemon/Cargo.toml
+@@ -4,4 +4,32 @@ version = "0.1.0"
+ edition = "2021"
+ 
+ [dependencies]
+-tokio = { version = "1", features = ["full"] }
++tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "process"] }
++tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
++futures-util = "0.3"
++cpal = "0.15"
++arboard = "3"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++anyhow = "1"
++aes-gcm = "0.10"
++rand = "0.8"
++tracing = "0.1"
++tracing-subscriber = { version = "0.3", features = ["fmt"] }
++dirs = "5"
++async-trait = "0.1"
++
++[dependencies.windows]
++version = "0.54"
++features = [
++    "Win32_Foundation",
++    "Win32_UI_WindowsAndMessaging",
++    "Win32_UI_Input_KeyboardAndMouse",
++    "Win32_UI_Accessibility",
++    "Win32_UI_Shell",
++    "Win32_System_Threading",
++    "Win32_System_Com",
++    "Win32_System_ProcessStatus",
++    "Win32_System_LibraryLoader",
++    "Win32_Graphics_Gdi",
++]
+diff --git a/zero-daemon/src/main.rs b/zero-daemon/src/main.rs
+index 7dd9523..242e1f1 100644
+--- a/zero-daemon/src/main.rs
++++ b/zero-daemon/src/main.rs
+@@ -1,3 +1,384 @@
+-fn main() {
+-    println!("zero-daemon placeholder — Phase 1 will implement");
++#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
++
++mod audio;
++mod buffer;
++mod clipboard;
++mod crypto;
++mod hotkey;
++mod injector;
++mod ipc;
++mod local_engine;
++mod overlay;
++mod persian;
++mod protocol;
++mod router;
++mod tray;
++mod ws_client;
++
++use std::path::PathBuf;
++use std::sync::mpsc as std_mpsc;
++
++use anyhow::Result;
++use tokio::sync::mpsc;
++use tracing::{error, info, warn};
++use windows::Win32::Foundation::{LPARAM, WPARAM};
++use windows::Win32::UI::WindowsAndMessaging::{
++    DispatchMessageW, GetMessageW, PostMessageW, TranslateMessage, MSG,
++};
++
++use crate::ws_client::SttEvent;
++use crate::injector::TextInjector;
++
++const GATEWAY_URL: &str = "ws://127.0.0.1:9009";
++
++#[allow(dead_code)]
++enum DaemonCmd {
++    StartRecording,
++    StopRecording,
++    ToggleRecording,
++    Shutdown,
++}
++
++enum DaemonEvent {
++    RecordingStarted,
++    TranscriptionDone(String, injector::InjectionStrategy),
++    Error(String),
++}
++
++fn data_dir() -> PathBuf {
++    dirs::data_local_dir()
++        .unwrap_or_else(|| PathBuf::from("."))
++        .join("Zero")
++}
++
++fn main() -> Result<()> {
++    tracing_subscriber::fmt::init();
++    info!("zero-daemon starting");
++
++    overlay::init_overlay();
++
++    let ipc_server = std::sync::Arc::new(ipc::IpcServer::new());
++    let _ = ipc::IPC_SERVER.set(std::sync::Arc::clone(&ipc_server));
++
++    let mut tray_icon = tray::create_window_and_tray()?;
++    let hwnd = tray_icon.hwnd();
++
++    let (cmd_tx, cmd_rx) = std_mpsc::channel::<DaemonCmd>();
++    let (event_tx, event_rx) = std_mpsc::channel::<DaemonEvent>();
++
++    let hotkey_mgr = hotkey::HotkeyManager::new();
++    hotkey_mgr.register(cmd_tx.clone())?;
++    info!("hotkey registered: Ctrl+Shift+Z (low-level hook)");
++
++    let hwnd_raw = hwnd.0 as isize;
++    let ipc_server_clone = std::sync::Arc::clone(&ipc_server);
++    std::thread::spawn(move || {
++        let rt = tokio::runtime::Builder::new_multi_thread()
++            .enable_all()
++            .build()
++            .expect("tokio runtime");
++        rt.block_on(async {
++            ipc_server_clone.start();
++            local_engine::start_global_unload_watchdog();
++            daemon_loop(cmd_rx, event_tx, hwnd_raw).await;
++        });
++    });
++
++    info!("entering message loop");
++    run_message_loop(&mut tray_icon, &event_rx);
++
++    let _ = cmd_tx.send(DaemonCmd::Shutdown);
++    info!("zero-daemon exiting");
++    Ok(())
++}
++
++fn run_message_loop(
++    tray_icon: &mut tray::TrayIcon,
++    event_rx: &std_mpsc::Receiver<DaemonEvent>,
++) {
++    let mut msg = MSG::default();
++    loop {
++        let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
++        if !ret.as_bool() {
++            break;
++        }
++
++        if msg.message == tray::WM_DAEMON_EVENT {
++            while let Ok(event) = event_rx.try_recv() {
++                match event {
++                    DaemonEvent::RecordingStarted => {
++                        tray::show_balloon(tray_icon, "Zero", "ضبط شروع شد...");
++                    }
++                    DaemonEvent::TranscriptionDone(text, strategy) => {
++                        match strategy {
++                            injector::InjectionStrategy::ClipboardOnly => {
++                                let _ = clipboard::set_clipboard_text(&text);
++                                tray::show_balloon(tray_icon, "Zero", "کپی شد ✓");
++                                info!(text = %text, "text copied to clipboard");
++                            }
++                            _ => {
++                                tray::show_balloon(tray_icon, "Zero", "درج شد ✓");
++                                info!(text = %text, strategy = ?strategy, "text injected successfully");
++                            }
++                        }
++                    }
++                    DaemonEvent::Error(msg) => {
++                        warn!("error: {}", msg);
++                        tray::show_balloon(tray_icon, "Zero", &msg);
++                    }
++                }
++            }
++        }
++
++        unsafe {
++            TranslateMessage(&msg);
++            DispatchMessageW(&msg);
++        }
++    }
++}
++
++fn is_blacklisted(_process_name: &str) -> bool {
++    // For now, no blacklist. In the future this will read from SQLite config.
++    false
++}
++
++async fn daemon_loop(
++    cmd_rx: std_mpsc::Receiver<DaemonCmd>,
++    event_tx: std_mpsc::Sender<DaemonEvent>,
++    hwnd_raw: isize,
++) {
++    let data = data_dir();
++    let tmp_dir = data.join("tmp");
++    let router = router::AudioRouter::new();
++
++    let crypto = match crypto::AudioCrypto::load_or_create(&data) {
++        Ok(c) => c,
++        Err(e) => {
++            error!("crypto init failed: {}", e);
++            let _ = event_tx.send(DaemonEvent::Error(format!("خطای رمزنگاری: {}", e)));
++            return;
++        }
++    };
++
++    let recovered = buffer::recover_temp_files(&tmp_dir, &crypto);
++    if !recovered.is_empty() {
++        info!(
++            "found {} orphaned temp files from previous session",
++            recovered.len()
++        );
++    }
++
++    let mut recording: Option<RecordingState> = None;
++
++    loop {
++        match cmd_rx.recv() {
++            Ok(DaemonCmd::StartRecording) => {
++                if recording.is_none() {
++                    let snapshot = injector::take_destination_snapshot();
++                    if is_blacklisted(&snapshot.process_name) {
++                        warn!("Process {} is blacklisted. Ignoring recording.", snapshot.process_name);
++                        let _ = event_tx.send(DaemonEvent::Error("این برنامه در لیست سیاه است".into()));
++                        post_event(hwnd_raw);
++                        overlay::set_overlay_state(overlay::OverlayState::Error);
++                        tokio::spawn(async {
++                            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
++                            overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                        });
++                        continue;
++                    }
++
++                    info!("starting recording (PTT)");
++                    match start_recording(&tmp_dir, &event_tx, hwnd_raw, snapshot).await {
++                        Ok(state) => {
++                            recording = Some(state);
++                            overlay::set_overlay_state(overlay::OverlayState::Listening);
++                        }
++                        Err(e) => {
++                            error!("failed to start recording: {}", e);
++                            let _ = event_tx
++                                .send(DaemonEvent::Error("میکروفون در دسترس نیست".into()));
++                            post_event(hwnd_raw);
++                            overlay::set_overlay_state(overlay::OverlayState::Error);
++                            tokio::spawn(async {
++                                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
++                                overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                            });
++                        }
++                    }
++                }
++            }
++            Ok(DaemonCmd::StopRecording) => {
++                if let Some(state) = recording.take() {
++                    info!("stopping recording (PTT)");
++                    stop_and_transcribe(state, &event_tx, hwnd_raw, &router).await;
++                }
++            }
++            Ok(DaemonCmd::ToggleRecording) => {
++                if let Some(state) = recording.take() {
++                    info!("stopping recording (Toggle)");
++                    stop_and_transcribe(state, &event_tx, hwnd_raw, &router).await;
++                } else {
++                    let snapshot = injector::take_destination_snapshot();
++                    if is_blacklisted(&snapshot.process_name) {
++                        warn!("Process {} is blacklisted. Ignoring recording.", snapshot.process_name);
++                        let _ = event_tx.send(DaemonEvent::Error("این برنامه در لیست سیاه است".into()));
++                        post_event(hwnd_raw);
++                        overlay::set_overlay_state(overlay::OverlayState::Error);
++                        tokio::spawn(async {
++                            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
++                            overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                        });
++                        continue;
++                    }
++
++                    info!("starting recording (Toggle)");
++                    match start_recording(&tmp_dir, &event_tx, hwnd_raw, snapshot).await {
++                        Ok(state) => {
++                            recording = Some(state);
++                            overlay::set_overlay_state(overlay::OverlayState::Listening);
++                        }
++                        Err(e) => {
++                            error!("failed to start recording: {}", e);
++                            let _ = event_tx
++                                .send(DaemonEvent::Error("میکروفون در دسترس نیست".into()));
++                            post_event(hwnd_raw);
++                            overlay::set_overlay_state(overlay::OverlayState::Error);
++                            tokio::spawn(async {
++                                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
++                                overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                            });
++                        }
++                    }
++                }
++            }
++            Ok(DaemonCmd::Shutdown) | Err(_) => {
++                if let Some(state) = recording.take() {
++                    state.capture.stop();
++                    overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                }
++                break;
++            }
++        }
++    }
++}
++
++struct RecordingState {
++    capture: audio::CaptureHandle,
++    buffer: buffer::TempBuffer,
++    audio_rx: mpsc::UnboundedReceiver<Vec<u8>>,
++    ws_session: Option<ws_client::SttSession>,
++    stt_event_rx: mpsc::UnboundedReceiver<SttEvent>,
++    snapshot: injector::DestinationSnapshot,
++}
++
++async fn start_recording(
++    tmp_dir: &std::path::Path,
++    event_tx: &std_mpsc::Sender<DaemonEvent>,
++    hwnd_raw: isize,
++    snapshot: injector::DestinationSnapshot,
++) -> Result<RecordingState> {
++    let (chunk_tx, audio_rx) = mpsc::unbounded_channel();
++
++    let capture = audio::start_capture(chunk_tx)?;
++
++    let temp_crypto = crypto::AudioCrypto::load_or_create(&data_dir())?;
++    let temp_buffer = buffer::TempBuffer::create(tmp_dir, temp_crypto)?;
++
++    let (stt_tx, stt_event_rx) = mpsc::unbounded_channel();
++    let ws_session = match ws_client::SttSession::connect(GATEWAY_URL, stt_tx).await {
++        Ok(s) => Some(s),
++        Err(e) => {
++            warn!("gateway not available: {} — recording locally only", e);
++            None
++        }
++    };
++
++    let _ = event_tx.send(DaemonEvent::RecordingStarted);
++    post_event(hwnd_raw);
++
++    Ok(RecordingState {
++        capture,
++        buffer: temp_buffer,
++        audio_rx,
++        ws_session,
++        stt_event_rx,
++        snapshot,
++    })
++}
++
++async fn stop_and_transcribe(
++    mut state: RecordingState,
++    event_tx: &std_mpsc::Sender<DaemonEvent>,
++    hwnd_raw: isize,
++    router: &router::AudioRouter,
++) {
++    state.capture.stop();
++    overlay::set_overlay_state(overlay::OverlayState::Processing);
++    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
++
++    let mut all_pcm = Vec::new();
++    while let Ok(chunk) = state.audio_rx.try_recv() {
++        let _ = state.buffer.write_chunk(&chunk);
++        all_pcm.extend_from_slice(&chunk);
++    }
++
++    let wav_path = state.buffer.finish();
++
++    // Delegate transcription to AudioRouter
++    match router.route_transcription(all_pcm, &wav_path, state.ws_session, &mut state.stt_event_rx).await {
++        Ok((text, is_transcribed)) => {
++            if is_transcribed {
++                let text = persian::normalize_persian_text(&text);
++                overlay::set_overlay_state(overlay::OverlayState::Success);
++                tokio::spawn(async {
++                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
++                    overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                });
++
++                let injector = TextInjector::new(std::sync::Arc::new(injector::Win32LowLevelInjector));
++                let strategy = injector.inject(&text, &state.snapshot).await;
++                
++                let _ = event_tx.send(DaemonEvent::TranscriptionDone(text.clone(), strategy.clone()));
++                if let Some(server) = crate::ipc::get_ipc_server() {
++                    server.broadcast_transcription(text, format!("{:?}", strategy));
++                }
++                post_event(hwnd_raw);
++            } else {
++                overlay::set_overlay_state(overlay::OverlayState::Error);
++                tokio::spawn(async {
++                    tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
++                    overlay::set_overlay_state(overlay::OverlayState::Hidden);
++                });
++
++                let _ = event_tx.send(DaemonEvent::Error(text.clone()));
++                if let Some(server) = crate::ipc::get_ipc_server() {
++                    server.broadcast_error(text);
++                }
++                post_event(hwnd_raw);
++            }
++            let _ = std::fs::remove_file(&wav_path);
++        }
++        Err(e) => {
++            overlay::set_overlay_state(overlay::OverlayState::Error);
++            tokio::spawn(async {
++                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
++                overlay::set_overlay_state(overlay::OverlayState::Hidden);
++            });
++
++            let error_msg = format!("خطای پردازش: {}", e);
++            let _ = event_tx.send(DaemonEvent::Error(error_msg.clone()));
++            if let Some(server) = crate::ipc::get_ipc_server() {
++                server.broadcast_error(error_msg);
++            }
++            post_event(hwnd_raw);
++            let _ = std::fs::remove_file(&wav_path);
++        }
++    }
++}
++
++fn post_event(hwnd_raw: isize) {
++    unsafe {
++        let hwnd = windows::Win32::Foundation::HWND(hwnd_raw);
++        let _ = PostMessageW(hwnd, tray::WM_DAEMON_EVENT, WPARAM(0), LPARAM(0));
++    }
+ }
+diff --git a/zero-server/package.json b/zero-server/package.json
+index 935cc53..2b09909 100644
+--- a/zero-server/package.json
++++ b/zero-server/package.json
+@@ -11,17 +11,37 @@
+   },
+   "dependencies": {
+     "@nestjs/common": "^10.4.0",
++    "@nestjs/config": "^4.0.4",
+     "@nestjs/core": "^10.4.0",
++    "@nestjs/jwt": "^11.0.2",
++    "@nestjs/passport": "^11.0.5",
+     "@nestjs/platform-express": "^10.4.0",
++    "@nestjs/platform-ws": "^11.1.28",
++    "@nestjs/websockets": "^11.1.28",
++    "axios": "^1.18.1",
++    "class-transformer": "^0.5.1",
++    "class-validator": "^0.15.1",
++    "ioredis": "^5.11.1",
++    "passport": "^0.7.0",
++    "passport-jwt": "^4.0.1",
+     "reflect-metadata": "^0.2.2",
+-    "rxjs": "^7.8.1"
++    "rxjs": "^7.8.1",
++    "uuid": "^14.0.1",
++    "ws": "^8.21.0",
++    "zod": "^4.4.3"
+   },
+   "devDependencies": {
+     "@nestjs/cli": "^10.4.0",
+     "@nestjs/testing": "^10.4.0",
++    "@prisma/client": "^5.22.0",
++    "@types/ioredis": "^4.28.10",
+     "@types/jest": "^29.5.12",
+     "@types/node": "^22.0.0",
++    "@types/passport-jwt": "^4.0.1",
++    "@types/uuid": "^10.0.0",
++    "@types/ws": "^8.18.1",
+     "jest": "^29.7.0",
++    "prisma": "^5.22.0",
+     "ts-jest": "^29.2.0",
+     "typescript": "^5.5.0"
+   }
+diff --git a/zero-server/src/app.module.ts b/zero-server/src/app.module.ts
+index c70621e..00368f8 100644
+--- a/zero-server/src/app.module.ts
++++ b/zero-server/src/app.module.ts
+@@ -1,6 +1,21 @@
+ import { Module } from '@nestjs/common';
++import { ConfigModule } from '@nestjs/config';
++import { PrismaModule } from './prisma/prisma.module';
++import { SettingsModule } from './settings/settings.module';
++import { AuthModule } from './auth/auth.module';
++import { QuotaModule } from './quota/quota.module';
++import { SttModule } from './stt/stt.module';
+ 
+ @Module({
+-  imports: [],
++  imports: [
++    ConfigModule.forRoot({
++      isGlobal: true,
++    }),
++    PrismaModule,
++    SettingsModule,
++    AuthModule,
++    QuotaModule,
++    SttModule,
++  ],
+ })
+ export class AppModule {}
+diff --git a/zero-server/tsconfig.json b/zero-server/tsconfig.json
+index 1dacd77..9c4e65f 100644
+--- a/zero-server/tsconfig.json
++++ b/zero-server/tsconfig.json
+@@ -11,6 +11,7 @@
+     "baseUrl": "./",
+     "incremental": true,
+     "strict": true,
++    "strictPropertyInitialization": false,
+     "skipLibCheck": true,
+     "forceConsistentCasingInFileNames": true
+   }
+diff --git a/zero-studio/package.json b/zero-studio/package.json
+index 2455967..c10a9c7 100644
+--- a/zero-studio/package.json
++++ b/zero-studio/package.json
+@@ -2,12 +2,26 @@
+   "name": "zero-studio",
+   "version": "0.1.0",
+   "private": true,
++  "type": "module",
+   "scripts": {
+-    "dev": "tauri dev",
+-    "build": "tauri build",
++    "dev": "vite",
++    "build": "vite build",
+     "tauri": "tauri"
+   },
+   "devDependencies": {
+-    "@tauri-apps/cli": "^2.0.0"
++    "@tailwindcss/postcss": "^4.3.2",
++    "@tauri-apps/cli": "^2.0.0",
++    "@vitejs/plugin-react": "^6.0.3",
++    "autoprefixer": "^10.5.2",
++    "esbuild": "^0.28.1",
++    "postcss": "^8.5.19",
++    "tailwindcss": "^4.3.2",
++    "vite": "^8.1.4"
++  },
++  "dependencies": {
++    "@tauri-apps/api": "^2.11.1",
++    "lucide-react": "^1.24.0",
++    "react": "^19.2.7",
++    "react-dom": "^19.2.7"
+   }
+ }
+diff --git a/zero-studio/src-tauri/Cargo.toml b/zero-studio/src-tauri/Cargo.toml
+index 357aa0d..af39d01 100644
+--- a/zero-studio/src-tauri/Cargo.toml
++++ b/zero-studio/src-tauri/Cargo.toml
+@@ -7,6 +7,7 @@ edition = "2021"
+ tauri = { version = "2", features = [] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
++tokio = { version = "1", features = ["full"] }
+ 
+ [build-dependencies]
+ tauri-build = { version = "2", features = [] }
+diff --git a/zero-studio/src-tauri/src/main.rs b/zero-studio/src-tauri/src/main.rs
+index 007e4d9..1f86d18 100644
+--- a/zero-studio/src-tauri/src/main.rs
++++ b/zero-studio/src-tauri/src/main.rs
+@@ -1,7 +1,61 @@
+ #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+ 
++use tokio::net::windows::named_pipe::ClientOptions;
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++async fn send_ipc_request(req: serde_json::Value) -> Result<serde_json::Value, String> {
++    let pipe_name = r"\\.\pipe\zero-ipc";
++    
++    // Connect to named pipe
++    let mut client = ClientOptions::new()
++        .open(pipe_name)
++        .map_err(|e| format!("Failed to connect to daemon pipe: {}", e))?;
++        
++    let req_bytes = serde_json::to_vec(&req)
++        .map_err(|e| format!("Serialization error: {}", e))?;
++        
++    client.write_all(&req_bytes).await
++        .map_err(|e| format!("Write error: {}", e))?;
++        
++    let mut buf = vec![0u8; 1024];
++    let n = client.read(&mut buf).await
++        .map_err(|e| format!("Read error: {}", e))?;
++        
++    let res: serde_json::Value = serde_json::from_slice(&buf[..n])
++        .map_err(|e| format!("Deserialization error: {}", e))?;
++        
++    Ok(res)
++}
++
++#[tauri::command]
++async fn get_daemon_status() -> Result<serde_json::Value, String> {
++    send_ipc_request(serde_json::json!({
++        "type": "GetStatus"
++    })).await
++}
++
++#[tauri::command]
++async fn trigger_record() -> Result<serde_json::Value, String> {
++    send_ipc_request(serde_json::json!({
++        "type": "TriggerRecord"
++    })).await
++}
++
++#[tauri::command]
++async fn update_settings(settings: String) -> Result<serde_json::Value, String> {
++    send_ipc_request(serde_json::json!({
++        "type": "UpdateSettings",
++        "settings": settings
++    })).await
++}
++
+ fn main() {
+     tauri::Builder::default()
++        .invoke_handler(tauri::generate_handler![
++            get_daemon_status,
++            trigger_record,
++            update_settings
++        ])
+         .run(tauri::generate_context!())
+         .expect("error running Zero Studio");
+ }
+diff --git a/zero-studio/src-tauri/tauri.conf.json b/zero-studio/src-tauri/tauri.conf.json
+index adc9d98..046a9a8 100644
+--- a/zero-studio/src-tauri/tauri.conf.json
++++ b/zero-studio/src-tauri/tauri.conf.json
+@@ -4,7 +4,10 @@
+   "version": "0.1.0",
+   "identifier": "com.zero.studio",
+   "build": {
+-    "frontendDist": "../src"
++    "beforeDevCommand": "npm run dev",
++    "beforeBuildCommand": "npm run build",
++    "frontendDist": "../dist",
++    "devUrl": "http://localhost:1420"
+   },
+   "app": {
+     "windows": [
+diff --git a/zero-studio/src/index.html b/zero-studio/src/index.html
+deleted file mode 100644
+index 6fbb3a4..0000000
+--- a/zero-studio/src/index.html
++++ /dev/null
+@@ -1,10 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="fa" dir="rtl">
+-<head>
+-  <meta charset="UTF-8" />
+-  <title>Zero Studio</title>
+-</head>
+-<body>
+-  <h1>Zero Studio — Phase 6</h1>
+-</body>
+-</html>
