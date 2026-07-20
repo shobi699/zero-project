@@ -100,3 +100,5 @@ docs/                   ← specs, decisions, progress, manual test checklists
 **Build:** hotkey, capture, cloud+local STT, smart 3-strategy injection, overlay, history, blacklist, freemium quota, Persian text rules, offline mode.
 
 **Do NOT build:** polish/LLM layer, context awareness, personal dictionary, draft mode window, voice commands (beyond minimal correction), macOS/Linux. Leave extension points only.
+
+**Chapter 2 (post-v1):** Zero Notes, simultaneous translation, meeting/transcript mode, personal dictionary, voice snippets, voice edit commands, usage stats, LLM polish layer. Each requires confirmed ADR (docs/DECISIONS.md §005–008). See TASKS.md Phases 8–12.
