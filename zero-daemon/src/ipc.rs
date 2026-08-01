@@ -40,6 +40,37 @@ pub enum IpcRequest {
     SetConfig { config: String },
     GetModelStatus,
     SetActiveModel { model_id: String },
+    GetHistory,
+    DeleteHistory { id: String },
+    DeleteAllHistory,
+    GetBlacklist,
+    AddBlacklist { process: String },
+    RemoveBlacklist { process: String },
+    DeleteAllData,
+    // Notes
+    GetNotes,
+    GetNote { id: String },
+    CreateNote { title: String, body: String, tags: String },
+    UpdateNote { id: String, title: String, body: String, tags: String },
+    PinNote { id: String, pinned: bool },
+    DeleteNote { id: String },
+    SearchNotes { query: String },
+    // Meeting mode
+    StartMeeting,
+    StopMeeting,
+    // Interactive Preview
+    InjectText { text: String },
+    CancelPreview,
+    // Dictionary
+    GetDictionary,
+    AddDictionary { wrong: String, correct: String },
+    RemoveDictionary { id: i64 },
+    // Snippets
+    GetSnippets,
+    AddSnippet { trigger_text: String, replacement: String },
+    RemoveSnippet { id: i64 },
+    // Stats
+    GetUsageStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,11 +78,19 @@ pub enum IpcRequest {
 pub enum IpcResponse {
     StatusUpdate { status: String },
     Transcription { text: String, strategy: String },
+    TranscriptionPreview { text: String, x: i32, y: i32 },
     TranscriptionResult { text: String },
     ErrorMsg { message: String },
     Ack { ok: bool },
     Config { config: String },
     ModelStatus { models: String },
+    History { items: String },
+    Blacklist { processes: String },
+    Notes { items: String },
+    Note { note: String },
+    Dictionary { entries: String },
+    Snippets { entries: String },
+    UsageStats { stats: String },
 }
 
 pub struct IpcServer {
@@ -128,6 +167,10 @@ impl IpcServer {
 
     pub fn broadcast_transcription(&self, text: String, strategy: String) {
         let _ = self.tx.send(IpcResponse::Transcription { text, strategy });
+    }
+
+    pub fn broadcast_transcription_preview(&self, text: String, x: i32, y: i32) {
+        let _ = self.tx.send(IpcResponse::TranscriptionPreview { text, x, y });
     }
 
     pub fn broadcast_error(&self, message: String) {
@@ -223,13 +266,19 @@ async fn handle_client(
                                             };
                                             crate::overlay::set_overlay_mode(overlay_mode);
                                         }
-                                        // Persist all settings to config (hotkey, engine, unload_timeout, overlay_mode)
+                                        // Persist all settings to config
                                         crate::config::update_config(|c| {
                                             c.hotkey = payload.hotkey;
                                             c.engine_mode = payload.engine;
                                             c.unload_timeout = payload.unload_timeout;
                                             if let Some(ref mode) = payload.overlay_mode {
                                                 c.overlay_mode = mode.clone();
+                                            }
+                                            if let Some(ref mode) = payload.translate_mode {
+                                                c.translate_mode = mode.clone();
+                                            }
+                                            if let Some(im) = payload.interactive_mode {
+                                                c.interactive_mode = im;
                                             }
                                         });
                                         IpcResponse::Ack { ok }
@@ -285,6 +334,218 @@ async fn handle_client(
                                     }
                                 }
                             }
+                            Ok(IpcRequest::GetHistory) => {
+                                let cfg = crate::config::get_config();
+                                let json = serde_json::to_string(&cfg.history).unwrap_or_default();
+                                IpcResponse::History { items: json }
+                            }
+                            Ok(IpcRequest::DeleteHistory { id }) => {
+                                crate::config::delete_history(&id);
+                                IpcResponse::Ack { ok: true }
+                            }
+                            Ok(IpcRequest::DeleteAllHistory) => {
+                                crate::config::delete_all_history();
+                                IpcResponse::Ack { ok: true }
+                            }
+                            Ok(IpcRequest::GetBlacklist) => {
+                                let bl = crate::config::get_blacklist();
+                                let json = serde_json::to_string(&bl).unwrap_or_default();
+                                IpcResponse::Blacklist { processes: json }
+                            }
+                            Ok(IpcRequest::AddBlacklist { process }) => {
+                                crate::config::add_to_blacklist(process);
+                                IpcResponse::Ack { ok: true }
+                            }
+                            Ok(IpcRequest::RemoveBlacklist { process }) => {
+                                crate::config::remove_from_blacklist(&process);
+                                IpcResponse::Ack { ok: true }
+                            }
+                            Ok(IpcRequest::DeleteAllData) => {
+                                match crate::config::delete_all_data() {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to delete data: {}", e),
+                                    },
+                                }
+                            }
+                            // Notes handlers
+                            Ok(IpcRequest::GetNotes) => {
+                                match crate::db::get_all_notes() {
+                                    Ok(notes) => {
+                                        let json = serde_json::to_string(&notes).unwrap_or_default();
+                                        IpcResponse::Notes { items: json }
+                                    }
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to get notes: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::GetNote { id }) => {
+                                match crate::db::get_note(&id) {
+                                    Ok(Some(note)) => {
+                                        let json = serde_json::to_string(&note).unwrap_or_default();
+                                        IpcResponse::Note { note: json }
+                                    }
+                                    Ok(None) => IpcResponse::ErrorMsg {
+                                        message: "note not found".to_string(),
+                                    },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to get note: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::CreateNote { title, body, tags }) => {
+                                let tags_vec: Vec<String> = serde_json::from_str(&tags).unwrap_or_default();
+                                match crate::db::create_note(&title, &body, &tags_vec) {
+                                    Ok(note) => {
+                                        let json = serde_json::to_string(&note).unwrap_or_default();
+                                        IpcResponse::Note { note: json }
+                                    }
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to create note: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::UpdateNote { id, title, body, tags }) => {
+                                let tags_vec: Vec<String> = serde_json::from_str(&tags).unwrap_or_default();
+                                match crate::db::update_note(&id, &title, &body, &tags_vec) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to update note: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::PinNote { id, pinned }) => {
+                                match crate::db::pin_note(&id, pinned) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to pin note: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::DeleteNote { id }) => {
+                                match crate::db::delete_note(&id) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to delete note: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::SearchNotes { query }) => {
+                                match crate::db::search_notes(&query) {
+                                    Ok(notes) => {
+                                        let json = serde_json::to_string(&notes).unwrap_or_default();
+                                        IpcResponse::Notes { items: json }
+                                    }
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to search notes: {}", e),
+                                    },
+                                }
+                            }
+                            // Meeting mode handlers
+                            Ok(IpcRequest::StartMeeting) => {
+                                let ok = CMD_TX
+                                    .get()
+                                    .is_some_and(|tx| tx.send(DaemonCmd::StartMeeting).is_ok());
+                                IpcResponse::Ack { ok }
+                            }
+                            Ok(IpcRequest::StopMeeting) => {
+                                let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+                                let sent = CMD_TX
+                                    .get()
+                                    .is_some_and(|tx| tx.send(DaemonCmd::StopMeeting(reply_tx)).is_ok());
+                                if !sent {
+                                    IpcResponse::ErrorMsg {
+                                        message: "daemon not available".to_string(),
+                                    }
+                                } else {
+                                    match std::thread::spawn(move || {
+                                        reply_rx.recv_timeout(std::time::Duration::from_secs(120))
+                                    }).join() {
+                                        Ok(Ok(text)) => IpcResponse::TranscriptionResult { text },
+                                        Ok(Err(_)) => IpcResponse::ErrorMsg {
+                                            message: "timeout waiting for meeting transcript".to_string(),
+                                        },
+                                        Err(_) => IpcResponse::ErrorMsg {
+                                            message: "daemon thread panicked".to_string(),
+                                        },
+                                    }
+                                }
+                            }
+                            // Interactive Preview handlers
+                            Ok(IpcRequest::InjectText { text }) => {
+                                let ok = CMD_TX
+                                    .get()
+                                    .is_some_and(|tx| tx.send(DaemonCmd::InjectText(text)).is_ok());
+                                IpcResponse::Ack { ok }
+                            }
+                            Ok(IpcRequest::CancelPreview) => {
+                                let ok = CMD_TX
+                                    .get()
+                                    .is_some_and(|tx| tx.send(DaemonCmd::CancelPreview).is_ok());
+                                IpcResponse::Ack { ok }
+                            }
+                            // Dictionary handlers
+                            Ok(IpcRequest::GetDictionary) => {
+                                match crate::db::get_all_dict_entries() {
+                                    Ok(entries) => {
+                                        let json = serde_json::to_string(&entries).unwrap_or_default();
+                                        IpcResponse::Dictionary { entries: json }
+                                    }
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to get dictionary: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::AddDictionary { wrong, correct }) => {
+                                match crate::db::add_dict_entry(&wrong, &correct) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to add dictionary entry: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::RemoveDictionary { id }) => {
+                                match crate::db::remove_dict_entry(id) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to remove dictionary entry: {}", e),
+                                    },
+                                }
+                            }
+                            // Snippet handlers
+                            Ok(IpcRequest::GetSnippets) => {
+                                match crate::db::get_all_snippets() {
+                                    Ok(entries) => {
+                                        let json = serde_json::to_string(&entries).unwrap_or_default();
+                                        IpcResponse::Snippets { entries: json }
+                                    }
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to get snippets: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::AddSnippet { trigger_text, replacement }) => {
+                                match crate::db::add_snippet(&trigger_text, &replacement) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to add snippet: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::RemoveSnippet { id }) => {
+                                match crate::db::remove_snippet(id) {
+                                    Ok(()) => IpcResponse::Ack { ok: true },
+                                    Err(e) => IpcResponse::ErrorMsg {
+                                        message: format!("failed to remove snippet: {}", e),
+                                    },
+                                }
+                            }
+                            Ok(IpcRequest::GetUsageStats) => {
+                                let stats = crate::config::compute_usage_stats();
+                                let json = serde_json::to_string(&stats).unwrap_or_default();
+                                IpcResponse::UsageStats { stats: json }
+                            }
                             Err(e) => {
                                 warn!("invalid IPC request: {}", e);
                                 IpcResponse::ErrorMsg {
@@ -331,4 +592,6 @@ struct SettingsPayload {
     hotkey: String,
     unload_timeout: u32,
     overlay_mode: Option<String>,
+    translate_mode: Option<String>,
+    interactive_mode: Option<bool>,
 }

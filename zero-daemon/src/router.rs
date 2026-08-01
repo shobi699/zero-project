@@ -184,7 +184,8 @@ impl AudioRouter {
 
                     // Establish temp WebSocket session
                     let (stt_tx, mut stt_event_rx) = mpsc::unbounded_channel();
-                    let ws_session = SttSession::connect(crate::GATEWAY_URL, stt_tx).await;
+                    let gateway_url = crate::config::get_config().gateway_url;
+                    let ws_session = SttSession::connect(&gateway_url, stt_tx).await;
 
                     if let Ok(mut session) = ws_session {
                         let mut success = true;
@@ -234,7 +235,8 @@ fn now_millis() -> u128 {
 }
 
 async fn is_gateway_online() -> bool {
-    let addr = crate::GATEWAY_URL.trim_start_matches("ws://");
+    let gateway_url = crate::config::get_config().gateway_url;
+    let addr = gateway_url.trim_start_matches("ws://");
     tokio::net::TcpStream::connect(addr).await.is_ok()
 }
 

@@ -5,6 +5,7 @@ mod buffer;
 mod clipboard;
 mod config;
 mod crypto;
+mod db;
 mod hotkey;
 mod injector;
 mod ipc;
@@ -30,8 +31,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::ws_client::SttEvent;
 use crate::injector::TextInjector;
 
-const GATEWAY_URL: &str = "ws://127.0.0.1:9009";
-
 #[allow(dead_code)]
 enum DaemonCmd {
     StartRecording,
@@ -40,8 +39,18 @@ enum DaemonCmd {
     /// Record for the notepad — transcribed text is returned via the Sender
     /// instead of being injected at the OS cursor.
     RecordForNotepad(ipc::NotepadReplyTx),
+    /// Start continuous meeting recording (long recording mode)
+    StartMeeting,
+    /// Stop meeting recording and transcribe
+    StopMeeting(ipc::NotepadReplyTx),
+    /// Inject text using the interactive preview snapshot
+    InjectText(String),
+    /// Cancel the interactive preview
+    CancelPreview,
     Shutdown,
 }
+
+static LAST_SNAPSHOT: std::sync::OnceLock<std::sync::Mutex<Option<injector::DestinationSnapshot>>> = std::sync::OnceLock::new();
 
 enum DaemonEvent {
     RecordingStarted,
@@ -61,6 +70,11 @@ fn main() -> Result<()> {
 
     overlay::init_overlay();
     config::init_config();
+
+    // Initialize notes database
+    if let Err(e) = db::init_db() {
+        warn!("failed to initialize notes database: {}", e);
+    }
 
     // Apply saved overlay mode from config
     let cfg = config::get_config();
@@ -83,7 +97,14 @@ fn main() -> Result<()> {
 
     let hotkey_mgr = hotkey::HotkeyManager::new();
     hotkey_mgr.register(cmd_tx.clone())?;
-    info!("hotkey registered: Ctrl+Shift+Z (low-level hook)");
+    
+    // Apply saved hotkey from config
+    if let Err(e) = hotkey::update_hotkey_from_string(&cfg.hotkey) {
+        warn!("failed to apply saved hotkey '{}': {}", cfg.hotkey, e);
+        info!("hotkey defaulted to: Ctrl+Shift+Z (low-level hook)");
+    } else {
+        info!("hotkey registered: {} (low-level hook)", cfg.hotkey);
+    }
 
     let hwnd_raw = hwnd.0 as isize;
     let ipc_server_clone = std::sync::Arc::clone(&ipc_server);
@@ -187,6 +208,32 @@ async fn daemon_loop(
 
     loop {
         match cmd_rx.recv() {
+            Ok(DaemonCmd::Shutdown) => {
+                info!("daemon shutting down");
+                break;
+            }
+            Ok(DaemonCmd::InjectText(text)) => {
+                if let Some(mutex) = LAST_SNAPSHOT.get() {
+                    if let Some(snapshot) = mutex.lock().unwrap().take() {
+                        let event_tx_clone = event_tx.clone();
+                        let hwnd_raw_clone = hwnd_raw;
+                        tokio::spawn(async move {
+                            let injector = TextInjector::new(std::sync::Arc::new(injector::Win32LowLevelInjector));
+                            let strategy = injector.inject(&text, &snapshot).await;
+                            let _ = event_tx_clone.send(DaemonEvent::TranscriptionDone(text.clone(), strategy));
+                            if let Some(server) = crate::ipc::get_ipc_server() {
+                                server.broadcast_transcription(text, format!("{:?}", strategy));
+                            }
+                            post_event(hwnd_raw_clone);
+                        });
+                    }
+                }
+            }
+            Ok(DaemonCmd::CancelPreview) => {
+                if let Some(mutex) = LAST_SNAPSHOT.get() {
+                    let _ = mutex.lock().unwrap().take();
+                }
+            }
             Ok(DaemonCmd::StartRecording) => {
                 if recording.is_none() {
                     let snapshot = injector::take_destination_snapshot();
@@ -303,6 +350,37 @@ async fn daemon_loop(
                     }
                 }
             }
+            Ok(DaemonCmd::StartMeeting) => {
+                if recording.is_some() {
+                    warn!("already recording, ignoring StartMeeting");
+                    continue;
+                }
+                let snapshot = injector::take_destination_snapshot();
+                info!("starting meeting recording (continuous mode)");
+                match start_recording(&tmp_dir, crypto.clone(), &event_tx, hwnd_raw, snapshot, None).await {
+                    Ok(state) => {
+                        recording = Some(state);
+                        overlay::set_overlay_state(overlay::OverlayState::Listening);
+                    }
+                    Err(e) => {
+                        error!("failed to start meeting recording: {}", e);
+                        overlay::set_overlay_state(overlay::OverlayState::Error);
+                        tokio::spawn(async {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                            overlay::set_overlay_state(overlay::OverlayState::Hidden);
+                        });
+                    }
+                }
+            }
+            Ok(DaemonCmd::StopMeeting(reply_tx)) => {
+                if let Some(state) = recording.take() {
+                    info!("stopping meeting recording, transcribing...");
+                    // Use a longer timeout for meeting transcription
+                    stop_and_transcribe_meeting(state, &event_tx, hwnd_raw, &router, reply_tx).await;
+                } else {
+                    let _ = reply_tx.send(String::new());
+                }
+            }
             Ok(DaemonCmd::Shutdown) | Err(_) => {
                 if let Some(state) = recording.take() {
                     state.capture.stop();
@@ -325,6 +403,8 @@ struct RecordingState {
     snapshot: injector::DestinationSnapshot,
     /// When set, the transcribed text is sent here instead of being injected.
     notepad_reply: Option<ipc::NotepadReplyTx>,
+    /// When recording started (for duration tracking)
+    start_time: std::time::Instant,
 }
 
 async fn start_recording(
@@ -341,19 +421,26 @@ async fn start_recording(
 
     let mut temp_buffer = buffer::TempBuffer::create(tmp_dir, crypto)?;
 
+    // Channel to stream chunks to the WebSocket session during recording
+    let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
     let writer = tokio::spawn(async move {
         let mut all_pcm = Vec::new();
         while let Some(chunk) = audio_rx.recv().await {
             if let Err(e) = temp_buffer.write_chunk(&chunk) {
                 warn!("failed to write audio chunk to temp buffer: {}", e);
             }
+            // Forward chunk for real-time streaming
+            let _ = stream_tx.send(chunk.clone());
             all_pcm.extend_from_slice(&chunk);
         }
         (temp_buffer, all_pcm)
     });
 
-    let (stt_tx, stt_event_rx) = mpsc::unbounded_channel();
-    let ws_session = match ws_client::SttSession::connect(GATEWAY_URL, stt_tx).await {
+    // Connect WebSocket for real-time streaming
+    let (stt_tx, _stt_event_rx) = mpsc::unbounded_channel();
+    let gateway_url = crate::config::get_config().gateway_url;
+    let ws_session = match ws_client::SttSession::connect(&gateway_url, stt_tx).await {
         Ok(s) => Some(s),
         Err(e) => {
             warn!("gateway not available: {} — recording locally only", e);
@@ -361,17 +448,64 @@ async fn start_recording(
         }
     };
 
+    // Spawn real-time streaming: forward chunks to WebSocket as they arrive
+    if let Some(mut session) = ws_session {
+        tokio::spawn(async move {
+            while let Some(chunk) = stream_rx.recv().await {
+                if let Err(e) = session.send_audio(chunk).await {
+                    warn!("real-time stream send failed: {}", e);
+                    break;
+                }
+            }
+            // Session dropped — end_speech handled by router on stop
+        });
+    }
+
     let _ = event_tx.send(DaemonEvent::RecordingStarted);
     post_event(hwnd_raw);
+
+    // New connection for receiving transcription results
+    let (result_tx, stt_event_rx) = mpsc::unbounded_channel();
+    let result_session = ws_client::SttSession::connect(&gateway_url, result_tx).await.ok();
 
     Ok(RecordingState {
         capture,
         writer,
-        ws_session,
+        ws_session: result_session,
         stt_event_rx,
         snapshot,
         notepad_reply,
+        start_time: std::time::Instant::now(),
     })
+}
+
+/// Translate text via server gateway (HTTP POST to /translation)
+async fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> Result<String, anyhow::Error> {
+    let cfg = crate::config::get_config();
+    let base_url = cfg.gateway_url
+        .replace("ws://", "http://")
+        .replace("wss://", "https://");
+    let url = format!("{}/translation", base_url);
+
+    let client = reqwest::Client::new();
+    let resp = client.post(&url)
+        .json(&serde_json::json!({
+            "text": text,
+            "sourceLang": source_lang,
+            "targetLang": target_lang,
+        }))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await?;
+
+    let data: serde_json::Value = resp.json().await?;
+    if let Some(err) = data.get("error").and_then(|e| e.as_str()) {
+        anyhow::bail!(err.to_string());
+    }
+    data.get("text")
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("no translation text in response"))
 }
 
 async fn stop_and_transcribe(
@@ -406,11 +540,67 @@ async fn stop_and_transcribe(
     match router.route_transcription(all_pcm, state.ws_session, &mut state.stt_event_rx).await {
         Ok((text, is_transcribed)) => {
             if is_transcribed {
-                let text = persian::normalize_persian_text(&text);
+                let mut text = persian::normalize_persian_text(&text);
+
+                // Apply personal dictionary
+                if let Ok(dict_pairs) = crate::db::get_dict_pairs() {
+                    if !dict_pairs.is_empty() {
+                        text = persian::apply_dictionary(&text, &dict_pairs);
+                    }
+                }
+
+                // Check for voice edit commands
+                if let Some(edited) = persian::apply_voice_commands(&text) {
+                    info!(original = %text, edited = %edited, "voice command applied");
+                    text = edited;
+                }
+
+                // Apply translation if mode is enabled
+                let cfg = crate::config::get_config();
+                if cfg.translate_mode != "off" {
+                    let (source_lang, target_lang) = match cfg.translate_mode.as_str() {
+                        "fa-en" => ("fa", "en"),
+                        "en-fa" => ("en", "fa"),
+                        _ => ("fa", "en"),
+                    };
+                    match translate_text(&text, source_lang, target_lang).await {
+                        Ok(translated) => {
+                            info!(original = %text, translated = %translated, "translation successful");
+                            text = translated;
+                        }
+                        Err(e) => {
+                            warn!("translation failed: {}, using original text", e);
+                        }
+                    }
+                }
+
                 overlay::set_overlay_state(overlay::OverlayState::Success);
                 tokio::spawn(async {
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     overlay::set_overlay_state(overlay::OverlayState::Hidden);
+                });
+
+                // Record to history (last 10 entries)
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let datetime = format!("{:04}/{:02}/{:02} {:02}:{:02}",
+                    1400 + (now / 31536000) % 100,
+                    (now / 2592000) % 12 + 1,
+                    (now / 86400) % 30 + 1,
+                    (now / 3600) % 24,
+                    (now / 60) % 60,
+                );
+                let duration = state.start_time.elapsed().as_secs_f64();
+                let id = format!("h_{}", now);
+                crate::config::add_history(crate::config::HistoryEntry {
+                    id,
+                    text: text.clone(),
+                    datetime,
+                    duration_secs: duration,
+                    strategy: "auto".to_string(),
+                    engine: crate::config::get_config().engine_mode.clone(),
                 });
 
                 if let Some(reply_tx) = state.notepad_reply {
@@ -418,13 +608,38 @@ async fn stop_and_transcribe(
                     let _ = reply_tx.send(text.clone());
                     info!(text = %text, "text returned to notepad (no injection)");
                 } else {
-                    // Normal mode: inject text at OS cursor.
-                    let injector = TextInjector::new(std::sync::Arc::new(injector::Win32LowLevelInjector));
-                    let strategy = injector.inject(&text, &state.snapshot).await;
+                    // Check for voice snippets before injection
+                    if let Ok(snippet_pairs) = crate::db::get_snippet_pairs() {
+                        if let Some(snippet_text) = persian::check_snippets(&text, &snippet_pairs) {
+                            info!(original = %text, snippet = %snippet_text, "snippet matched");
+                            text = snippet_text;
+                        }
+                    }
 
-                    let _ = event_tx.send(DaemonEvent::TranscriptionDone(text.clone(), strategy));
-                    if let Some(server) = crate::ipc::get_ipc_server() {
-                        server.broadcast_transcription(text, format!("{:?}", strategy));
+                    // Normal mode: check if interactive preview is requested
+                    let cfg = crate::config::get_config();
+                    if cfg.interactive_mode {
+                        LAST_SNAPSHOT.get_or_init(|| std::sync::Mutex::new(None))
+                            .lock()
+                            .unwrap()
+                            .replace(state.snapshot);
+
+                        let mut pt = windows::Win32::Foundation::POINT::default();
+                        unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt); }
+
+                        if let Some(server) = crate::ipc::get_ipc_server() {
+                            server.broadcast_transcription_preview(text.clone(), pt.x, pt.y);
+                        }
+                        info!(text = %text, "sent to interactive preview");
+                    } else {
+                        // Inject text at OS cursor.
+                        let injector = TextInjector::new(std::sync::Arc::new(injector::Win32LowLevelInjector));
+                        let strategy = injector.inject(&text, &state.snapshot).await;
+
+                        let _ = event_tx.send(DaemonEvent::TranscriptionDone(text.clone(), strategy));
+                        if let Some(server) = crate::ipc::get_ipc_server() {
+                            server.broadcast_transcription(text, format!("{:?}", strategy));
+                        }
                     }
                 }
                 post_event(hwnd_raw);
@@ -474,6 +689,121 @@ async fn stop_and_transcribe(
             );
         }
     }
+}
+
+/// Stop meeting recording and transcribe the full audio.
+/// Returns the complete transcript via reply_tx.
+async fn stop_and_transcribe_meeting(
+    mut state: RecordingState,
+    _event_tx: &std_mpsc::Sender<DaemonEvent>,
+    hwnd_raw: isize,
+    router: &router::AudioRouter,
+    reply_tx: ipc::NotepadReplyTx,
+) {
+    state.capture.stop();
+    overlay::set_overlay_state(overlay::OverlayState::Processing);
+
+    let (temp_buffer, all_pcm) = match state.writer.await {
+        Ok(result) => result,
+        Err(e) => {
+            error!("audio writer task failed: {}", e);
+            let _ = reply_tx.send(String::new());
+            overlay::set_overlay_state(overlay::OverlayState::Hidden);
+            post_event(hwnd_raw);
+            return;
+        }
+    };
+
+    let enc_path = temp_buffer.finish();
+    let duration_secs = all_pcm.len() as f64 / 32000.0; // 16kHz mono 16-bit
+
+    info!(
+        pcm_bytes = all_pcm.len(),
+        duration_secs,
+        "meeting recording stopped, starting transcription"
+    );
+
+    // Transcribe the full audio
+    match router.route_transcription(all_pcm, state.ws_session, &mut state.stt_event_rx).await {
+        Ok((text, is_transcribed)) => {
+            if is_transcribed {
+                let text = persian::normalize_persian_text(&text);
+
+                // Build SRT subtitle from the transcript (simple: one block)
+                let srt = format_srt(&text, duration_secs);
+
+                // Build full output with metadata
+                let output = format!(
+                    "# ترنسکریپت جلسه\n\n\
+                     **مدت:** {:.1} ثانیه\n\
+                     **تاریخ:** {}\n\n\
+                     ---\n\n\
+                     {}\n\n\
+                     ---\n\n\
+                     ## زیرنویس (SRT)\n\n```\n{}\n```",
+                    duration_secs,
+                    chrono_now_simple(),
+                    text,
+                    srt,
+                );
+
+                let _ = reply_tx.send(output);
+                overlay::set_overlay_state(overlay::OverlayState::Success);
+                tokio::spawn(async {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    overlay::set_overlay_state(overlay::OverlayState::Hidden);
+                });
+            } else {
+                let _ = reply_tx.send("ترنسکریپت ناموفق بود".to_string());
+                overlay::set_overlay_state(overlay::OverlayState::Error);
+                tokio::spawn(async {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                    overlay::set_overlay_state(overlay::OverlayState::Hidden);
+                });
+            }
+            let _ = std::fs::remove_file(&enc_path);
+        }
+        Err(e) => {
+            error!("meeting transcription failed: {}", e);
+            let _ = reply_tx.send(format!("خطا در ترنسکریپت: {}", e));
+            overlay::set_overlay_state(overlay::OverlayState::Error);
+            tokio::spawn(async {
+                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                overlay::set_overlay_state(overlay::OverlayState::Hidden);
+            });
+            post_event(hwnd_raw);
+            warn!("keeping encrypted temp file for recovery: {}", enc_path.display());
+        }
+    }
+}
+
+/// Format a simple SRT subtitle (one block covering the full duration)
+fn format_srt(text: &str, duration_secs: f64) -> String {
+    let start = "00:00:00,000";
+    let end_secs = duration_secs.floor() as u64;
+    let end_ms = ((duration_secs - end_secs as f64) * 1000.0) as u64;
+    let end = format!(
+        "{:02}:{:02}:{:02},{:03}",
+        end_secs / 3600,
+        (end_secs % 3600) / 60,
+        end_secs % 60,
+        end_ms
+    );
+    format!("1\n{} --> {}\n{}\n", start, end, text)
+}
+
+fn chrono_now_simple() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{:04}/{:02}/{:02} {:02}:{:02}",
+        1400 + (now / 31536000) % 100,
+        (now / 2592000) % 12 + 1,
+        (now / 86400) % 30 + 1,
+        (now / 3600) % 24,
+        (now / 60) % 60,
+    )
 }
 
 fn post_event(hwnd_raw: isize) {

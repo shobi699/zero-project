@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Mic, Settings as SettingsIcon, History as HistoryIcon, FileText, ShieldAlert, LogOut, CheckCircle, Info, RefreshCw } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { Mic, Settings as SettingsIcon, History as HistoryIcon, FileText, ShieldAlert, LogOut, Trash2, Video, BarChart3, BookOpen } from 'lucide-react';
 
 import Onboarding from './components/Onboarding';
 import Settings from './components/Settings';
 import History from './components/History';
 import Notepad from './components/Notepad';
+import Blacklist from './components/Blacklist';
+import MeetingMode from './components/MeetingMode';
+import Stats from './components/Stats';
+import TextTools from './components/TextTools';
 
 export default function App() {
   const [onboarded, setOnboarded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'settings' | 'history' | 'notepad'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'history' | 'notepad' | 'blacklist' | 'meeting' | 'stats' | 'texttools'>('settings');
   const [daemonStatus, setDaemonStatus] = useState<string>('Idle');
-  const [isConnecting, setIsConnecting] = useState(false);
 
   // Check onboarding status on mount
   useEffect(() => {
@@ -22,7 +27,34 @@ export default function App() {
     fetchDaemonStatus();
     // Poll daemon status every 3 seconds
     const interval = setInterval(fetchDaemonStatus, 3000);
-    return () => clearInterval(interval);
+
+    // Listen for interactive preview requests
+    const unlistenPreview = listen('interactive-preview', (event: any) => {
+      const { text, x, y } = event.payload;
+      localStorage.setItem('zero_preview_text', text);
+      
+      const webview = new WebviewWindow('preview', {
+        url: '/',
+        title: 'Preview',
+        transparent: true,
+        decorations: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        width: 400,
+        height: 250,
+        x: x,
+        y: Math.max(0, y - 280) // Position above cursor
+      });
+
+      webview.once('tauri://error', function (e) {
+        console.error('Failed to create webview window:', e);
+      });
+    });
+
+    return () => {
+      clearInterval(interval);
+      unlistenPreview.then(f => f());
+    };
   }, [onboarded]);
 
   const fetchDaemonStatus = async () => {
@@ -57,6 +89,17 @@ export default function App() {
       fetchDaemonStatus();
     } catch (e) {
       console.error("Failed to trigger record: ", e);
+    }
+  };
+
+  const handleDeleteAllData = async () => {
+    if (!confirm('آیا از حذف تمام داده‌ها اطمینان دارید؟\n\nاین عمل غیرقابل بازگشت است:\n- تاریخچه ضبط‌ها\n- لیست سیاه\n- فایل‌های موقت\n- تنظیمات')) return;
+    try {
+      await invoke('delete_all_data');
+      localStorage.removeItem('zero_onboarded');
+      setOnboarded(false);
+    } catch (e) {
+      console.error("Failed to delete all data: ", e);
     }
   };
 
@@ -119,6 +162,54 @@ export default function App() {
               <FileText className="w-4 h-4" />
               دفتر یادداشت
             </button>
+
+            <button
+              onClick={() => setActiveTab('blacklist')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
+                activeTab === 'blacklist'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-850'
+              }`}
+            >
+              <ShieldAlert className="w-4 h-4" />
+              لیست سیاه
+            </button>
+
+            <button
+              onClick={() => setActiveTab('meeting')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
+                activeTab === 'meeting'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-850'
+              }`}
+            >
+              <Video className="w-4 h-4" />
+              حالت جلسه
+            </button>
+
+            <button
+              onClick={() => setActiveTab('stats')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
+                activeTab === 'stats'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-850'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              آمار استفاده
+            </button>
+
+            <button
+              onClick={() => setActiveTab('texttools')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
+                activeTab === 'texttools'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-850'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              ابزارهای متنی
+            </button>
           </nav>
         </div>
 
@@ -147,6 +238,15 @@ export default function App() {
             </button>
           </div>
 
+          {/* Delete All Data */}
+          <button
+            onClick={handleDeleteAllData}
+            className="w-full flex items-center justify-center gap-2 text-slate-500 hover:text-rose-400 text-xs font-semibold py-2 rounded-lg transition border border-transparent hover:border-rose-500/20"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            پاک‌کردن همه داده‌ها
+          </button>
+
           <button
             onClick={() => {
               localStorage.removeItem('zero_onboarded');
@@ -171,6 +271,10 @@ export default function App() {
           {activeTab === 'settings' && <Settings onSave={handleSaveSettings} />}
           {activeTab === 'history' && <History />}
           {activeTab === 'notepad' && <Notepad />}
+          {activeTab === 'blacklist' && <Blacklist />}
+          {activeTab === 'meeting' && <MeetingMode />}
+          {activeTab === 'stats' && <Stats />}
+          {activeTab === 'texttools' && <TextTools />}
         </div>
       </main>
 

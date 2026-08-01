@@ -8,14 +8,14 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/**'],
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: process.platform === 'android' ? 'chrome105' : 'es2022',
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
-  },
-  watch: {
-    ignored: [/src-tauri/],
-  },
+  }
 })

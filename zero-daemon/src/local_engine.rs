@@ -102,6 +102,8 @@ impl LocalEngine {
             .arg("-f")
             .arg(wav_path)
             .arg("-nt")
+            .arg("-l")
+            .arg("auto")
             .output()
             .await
             .context("failed to execute whisper-cli process")?;

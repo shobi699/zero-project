@@ -5,6 +5,7 @@ import { SettingsModule } from './settings/settings.module';
 import { AuthModule } from './auth/auth.module';
 import { QuotaModule } from './quota/quota.module';
 import { SttModule } from './stt/stt.module';
+import { TranslationModule } from './translation/translation.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { SttModule } from './stt/stt.module';
     AuthModule,
     QuotaModule,
     SttModule,
+    TranslationModule,
   ],
 })
 export class AppModule {}

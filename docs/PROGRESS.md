@@ -142,3 +142,156 @@
 - **انحراف از سند:** از whisper-cli subprocess به‌جای whisper-rs FFI استفاده شد (عملکرد مشابه، سادگی بیشتر)
 - **مسائل باز:** تست حالت آفلاین نیاز به سخت‌افزار واقعی دارد
 
+---
+
+## فاز ۶ — Studio
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - پروتکل IPC: فریم‌بندی newline-delimited JSON روی Named Pipe (`ipc.rs`)
+  - فرانت: Tauri v2 + TypeScript با Tailwind CSS، RTL-first
+  - **آنبوردینگ**: ویزارد ۴ مرحله‌ای (میانبر → اتصال سرور → دانلود مدل → تست میکروفون)
+  - **تنظیمات**: حالت STT، میانبر، تایمر تخلیه مدل، حالت اورلی (cursor/corner)، کلید API
+  - **تاریخچه**: اتصال به daemon IPC — جستجو، کپی، حذف تکی، حذف همه
+  - **لیست سیاه**: افزودن/حذف نام پروسه، بنر راهنما
+  - **دکمه «پاک‌کردن همه داده‌ها»** در سایدبار
+  - فرانت بیلد: `vite build` موفق
+- **انحراف از سند:** ندارد
+- **مسائل باز:** تست دستی کامل نیاز به اجرای daemon دارد
+
+---
+
+## فاز ۷ — Persian rules & hardening (بخش اول)
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - `persian.rs` (۷۷ خط): پایپ‌لاین پردازش متن فارسی
+    - نرمال‌سازی حروف عربی → فارسی (ي→ی، ك→ک)
+    - نگاشت نشانه‌های گفتاری (علامت سوال→؟، نقطه→.، ویرگول→،)
+    - نیم‌فاصله: پیشوندها (می، نمی) و پسوندها (ها، تر، ترین، ام، ات، اش)
+    - ۳ تست واحد
+  - `GATEWAY_URL` از hardcoded به config منتقل شد (`config.rs:gateway_url`)
+  - استریم real-time چانک‌ها: ارسال همزمان بایت‌های صوتی به WebSocket حین ضبط (نه batch بعد از stop)
+    - `stream_tx` channel از writer task به streaming task
+    - Streaming task چانک‌ها را هنگام دریافت ارسال می‌کند
+    - اتصال مجزا برای دریافت نتیجه ترنسکریپت
+- **انحراف از سند:** ندارد
+- **مسائل باقی‌مانده (غیر بحرانی):**
+  - i18n واحد fa/en
+  - DPAPI برای کلید رمز
+  - Performance harness در CI
+  - Watchdog / silent updater / remote config
+  - Code-signing
+
+---
+
+## فاز ۸ — Zero Notes (دفتر یادداشت)
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - `db.rs` (۲۹۷ خط): ماژول SQLite با rusqlite (bundled)
+    - جدول `notes`: id, title, body, tags (JSON), pinned, created_at, updated_at
+    - FTS5 برای جستجوی تمام‌متن فارسی
+    - Triggers خودکار برای همگام‌سازی FTS
+    - توابع: create_note, get_all_notes, get_note, update_note, pin_note, delete_note, search_notes
+    - ۲ تست واحد: ایجاد/خواندن یادداشت، متن فارسی با نیم‌فاصله
+  - `ipc.rs`: ۷ درخواست IPC جدید (GetNotes, GetNote, CreateNote, UpdateNote, PinNote, DeleteNote, SearchNotes)
+  - `src-tauri/main.rs`: ۷ Tauri command جدید برای اتصال فرانت به daemon
+  - `Notepad.tsx` بازنویسی کامل:
+    - اتصال به daemon IPC به‌جای localStorage
+    - لیست یادداشت‌ها با جستجو و نمایش تگ‌ها
+    - ویرایشگر عنوان + متن + تگ‌ها
+    - سنجاق/سنجاق‌برداری یادداشت‌ها
+    - خروجی Markdown
+    - تایپ صوتی (Web Speech API + daemon IPC)
+- **انحراف از سند:** Word export (.docx) فعلاً پیاده نشده (فقط Markdown)
+- **مسائل باز:** ندارد
+
+---
+
+## فاز ۹ — Simultaneous Translation (ترجمه همزمان)
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - **سرور** — ماژول `translation/`:
+    - `TranslationProvider` interface (الگوی مشابه STT)
+    - `MyMemoryProvider`: API رایگان ترجمه بدون کلید (محدودیت ~5000 کاراکتر/روز)
+    - `TranslationService`: ترجمه با failover
+    - `TranslationController`: REST endpoint `POST /translation` با JWT auth
+    - سهمیه جداگانه ترجمه (10000 کاراکتر/ماه)
+    - ثبت در `AppModule`
+  - **دیمن** — پشتیبانی ترجمه:
+    - فیلد `translate_mode` در config ("off" | "fa-en" | "en-fa")
+    - تابع `translate_text()`: HTTP POST به سرور gateway با تایمر 5 ثانیه
+    - اعمال ترجمه بعد از نرمال‌سازی فارسی و قبل از درج متن
+  - **استودیو** — تنظیمات:
+    - سوییچ ترجمه ۳حالته: غیرفعال / فارسی→انگلیسی / انگلیسی→فارسی
+    - ذخیره و بازیابی از config
+- **انحراف از سند:** ندارد
+- **مسائل باز:** تست end-to-end نیاز به سرور واقعی دارد
+
+---
+
+## فاز ۱۰ — Meeting Mode & Transcript (حالت جلسه)
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - **دیمن** — حالت ضبط مداوم جلسه:
+    - فرمان‌های جدید `DaemonCmd::StartMeeting` / `StopMeeting`
+    - `stop_and_transcribe_meeting()`: ترنسکریپت کامل با تایمر ۱۲۰ ثانیه
+    - `format_srt()`: تبدیل متن به فرمت زیرنویس SRT
+    - `chrono_now_simple()`: تاریخ شمسی ساده
+    - بازیابی صوت از بافر رمزشده بعد از کرش (ویژگی موجود buffer.rs)
+  - **IPC** — درخواست‌های جدید:
+    - `StartMeeting` / `StopMeeting` با پاسخ TranscriptionResult
+    - Tauri commands: `start_meeting()` / `stop_meeting()` با تایمر ۱۲۵ ثانیه
+  - **استودیو** — `MeetingMode.tsx` (۱۷۵ خط):
+    - دکمه شروع/توقف ضبط با تایمر زنده
+    - نمایش ترنسکریپت کامل با فرمت SRT
+    - ذخیره در یادداشت‌ها (وابسته به فاز ۸)
+    - کپی متن و خروجی Markdown
+    - نوار پیشرفت حین پردازش
+- **انحراف از سند:** LLM summarization فعلاً پیاده نشده (نیاز به ADR-007)
+- **مسائل باز:** ندارد
+
+---
+
+## فاز ۱۱ — Text Intelligence: Dictionary, Snippets, Voice Commands
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - **پایگاه‌داده** — جداول جدید در `db.rs`:
+    - `dictionary`: id, wrong (غلط), correct (درست) — اصلاح خودکار کلمات
+    - `snippets`: id, trigger_text (عبارت تریگر), replacement (متن جایگزین)
+    - توابع CRUD: get/add/remove برای هر دو جدول
+  - **پایپ‌لاین متن** — توابع جدید در `persian.rs`:
+    - `apply_dictionary()`: جایگزینی کلمات غلط با درست (تطبیق کلمه کامل)
+    - `check_snippets()`: تشخیص عبارت تریگر در انتهای متن و جایگزینی
+    - `apply_voice_commands()`: پردازش فرمان‌های صوتی:
+      - "پاکش کن" → حذف آخرین کلمه
+      - "خط جدید" → اضافه کردن newline
+      - "همه‌اش را پاک کن" → پاک‌سازی کامل متن
+  - **IPC** — درخواست‌های جدید:
+    - `GetDictionary` / `AddDictionary` / `RemoveDictionary`
+    - `GetSnippets` / `AddSnippet` / `RemoveSnippet`
+    - Tauri commands متناظر
+  - **تست‌ها** — ۵ تست جدید (مجموع: ۱۸ تست):
+    - تطبیق فرهنگ لغت
+    - تشخیص اسنیپت
+    - ۳ فرمان صوتی
+- **انحراف از سند:** ندارد
+- **مسائل باز:** مدیریت فرانت (UI فرانت برای دیکشنری و اسنیپت‌ها فعلاً ساخته نشده)
+
+---
+
+## فاز ۱۲ — Usage Stats & LLM Polish Layer
+- تاریخ: 2026-07-20
+- **ساخته شد:**
+  - **آمار استفاده** — `config.rs`:
+    - `UsageStats` struct: total_entries, total_duration_secs, total_words, avg_duration_secs, by_engine
+    - `compute_usage_stats()`: محاسبه از تاریخچه محلی (بدون تله‌متری)
+  - **IPC** — درخواست جدید: `GetUsageStats` → `UsageStats` response
+  - **Tauri** — command: `get_usage_stats()`
+  - **استودیو** — `Stats.tsx` (۱۶۵ خط):
+    - ۴ کارت خلاصه: تعداد ضبط، مدت کل، تعداد کلمات، میانگین مدت
+    - نمودار میله‌ای توزیع موتور تبدیل (ابری/محلی/تأخیری)
+    - نمایش با فرمت فارسی (اعداد fa-IR)
+    - حالت خالی با راهنمای کاربر
+  - تب جدید «آمار استفاده» در سایدبار استودیو
+- **انحراف از سند:** LLM Polish فعلاً پیاده نشده (نیاز به سرویس سمت سرور + ADR)
+- **مسائل باز:** ندارد
+

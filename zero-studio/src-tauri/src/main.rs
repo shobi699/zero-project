@@ -2,7 +2,9 @@
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::ClientOptions;
+use tauri::Emitter;
 
+const PIPE_NAME: &str = r"\\.\pipe\zero-ipc";
 
 /// Sends one request over the daemon's named pipe and returns the reply.
 /// Protocol: newline-delimited JSON; every request gets exactly one reply line
@@ -20,10 +22,8 @@ async fn send_ipc_request_with_timeout(
     expected: &str,
     timeout: std::time::Duration,
 ) -> Result<serde_json::Value, String> {
-    let pipe_name = r"\\.\pipe\zero-ipc";
-
     let client = ClientOptions::new()
-        .open(pipe_name)
+        .open(PIPE_NAME)
         .map_err(|e| format!("Failed to connect to daemon pipe: {}", e))?;
 
     let (reader, mut writer) = tokio::io::split(client);
@@ -102,6 +102,22 @@ async fn record_for_notepad() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn inject_text(text: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "InjectText", "text": text }),
+        "Ack"
+    ).await
+}
+
+#[tauri::command]
+async fn cancel_preview() -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "CancelPreview" }),
+        "Ack"
+    ).await
+}
+
+#[tauri::command]
 async fn get_model_status() -> Result<serde_json::Value, String> {
     send_ipc_request(
         serde_json::json!({ "type": "GetModelStatus" }),
@@ -131,6 +147,159 @@ async fn set_config(config: String) -> Result<serde_json::Value, String> {
         "Ack",
     )
     .await
+}
+
+#[tauri::command]
+async fn get_history() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetHistory" }), "History").await
+}
+
+#[tauri::command]
+async fn delete_history(id: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "DeleteHistory", "id": id }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn delete_all_history() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "DeleteAllHistory" }), "Ack").await
+}
+
+#[tauri::command]
+async fn get_blacklist() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetBlacklist" }), "Blacklist").await
+}
+
+#[tauri::command]
+async fn add_blacklist(process: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "AddBlacklist", "process": process }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_blacklist(process: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "RemoveBlacklist", "process": process }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn delete_all_data() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "DeleteAllData" }), "Ack").await
+}
+
+#[tauri::command]
+async fn get_notes() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetNotes" }), "Notes").await
+}
+
+#[tauri::command]
+async fn get_note(id: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetNote", "id": id }), "Note").await
+}
+
+#[tauri::command]
+async fn create_note(title: String, body: String, tags: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "CreateNote", "title": title, "body": body, "tags": tags }),
+        "Note",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn update_note(id: String, title: String, body: String, tags: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "UpdateNote", "id": id, "title": title, "body": body, "tags": tags }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn pin_note(id: String, pinned: bool) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "PinNote", "id": id, "pinned": pinned }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn delete_note(id: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "DeleteNote", "id": id }), "Ack").await
+}
+
+#[tauri::command]
+async fn search_notes(query: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "SearchNotes", "query": query }), "Notes").await
+}
+
+#[tauri::command]
+async fn start_meeting() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "StartMeeting" }), "Ack").await
+}
+
+#[tauri::command]
+async fn stop_meeting() -> Result<String, String> {
+    let result = send_ipc_request_with_timeout(
+        serde_json::json!({ "type": "StopMeeting" }),
+        "TranscriptionResult",
+        std::time::Duration::from_secs(125),
+    )
+    .await?;
+    Ok(result["text"].as_str().unwrap_or("").to_string())
+}
+
+#[tauri::command]
+async fn get_dictionary() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetDictionary" }), "Dictionary").await
+}
+
+#[tauri::command]
+async fn add_dictionary(wrong: String, correct: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "AddDictionary", "wrong": wrong, "correct": correct }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_dictionary(id: i64) -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "RemoveDictionary", "id": id }), "Ack").await
+}
+
+#[tauri::command]
+async fn get_snippets() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetSnippets" }), "Snippets").await
+}
+
+#[tauri::command]
+async fn add_snippet(trigger_text: String, replacement: String) -> Result<serde_json::Value, String> {
+    send_ipc_request(
+        serde_json::json!({ "type": "AddSnippet", "trigger_text": trigger_text, "replacement": replacement }),
+        "Ack",
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_snippet(id: i64) -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "RemoveSnippet", "id": id }), "Ack").await
+}
+
+#[tauri::command]
+async fn get_usage_stats() -> Result<serde_json::Value, String> {
+    send_ipc_request(serde_json::json!({ "type": "GetUsageStats" }), "UsageStats").await
 }
 
 /// Resolves the models directory: reads config.json directly, falls back to default
@@ -470,6 +639,113 @@ async fn download_model(
 }
 
 #[tauri::command]
+fn open_models_dir() -> Result<(), String> {
+    let models_dir = resolve_models_dir();
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&models_dir)
+            .spawn()
+            .map_err(|e| format!("خطا در باز کردن پوشه: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&models_dir)
+            .spawn()
+            .map_err(|e| format!("خطا در باز کردن پوشه: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&models_dir)
+            .spawn()
+            .map_err(|e| format!("خطا در باز کردن پوشه: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn auto_convert_hf_model(
+    app: tauri::AppHandle,
+    repo_id: String,
+    filename: String,
+) -> Result<String, String> {
+    use tauri::Emitter;
+    use tauri::Manager;
+    use tokio::io::AsyncBufReadExt;
+
+    let models_dir = resolve_models_dir();
+    let cache_dir = models_dir.join(format!("{}_cache", filename));
+    let output_file = models_dir.join(&filename);
+
+    let script_path = app
+        .path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("scripts")
+        .join("auto_convert.py");
+        
+    // fallback if not found in appData (for dev)
+    let script_path_str = if script_path.exists() {
+        script_path.to_string_lossy().to_string()
+    } else {
+        "scripts/auto_convert.py".to_string()
+    };
+
+    let mut cmd = tokio::process::Command::new("python");
+    cmd.arg(script_path_str)
+        .arg(&repo_id)
+        .arg(output_file.to_string_lossy().to_string())
+        .arg(cache_dir.to_string_lossy().to_string());
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    
+    // Hide console window on Windows
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let mut child = cmd.spawn().map_err(|e| format!("خطا در اجرای پایتون: {}", e))?;
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    
+    let mut reader = tokio::io::BufReader::new(stdout).lines();
+    let mut err_reader = tokio::io::BufReader::new(stderr).lines();
+
+    let app_clone = app.clone();
+    let filename_clone = filename.clone();
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = err_reader.next_line().await {
+            let _ = app_clone.emit("model-convert-progress", serde_json::json!({
+                "model_id": filename_clone,
+                "message": line
+            }));
+        }
+    });
+
+    while let Ok(Some(line)) = reader.next_line().await {
+        let _ = app.emit("model-convert-progress", serde_json::json!({
+            "model_id": filename,
+            "message": line
+        }));
+    }
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+
+    if !status.success() {
+        return Err("عملیات تبدیل با خطا مواجه شد. لطفاً لاگ‌ها را بررسی کنید.".to_string());
+    }
+
+    let _ = app.emit("model-download-complete", serde_json::json!({ "model_id": filename }));
+
+    Ok(filename)
+}
+
+#[tauri::command]
 async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let folder = app.dialog().file().blocking_pick_folder();
@@ -478,6 +754,43 @@ async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                use tokio::net::windows::named_pipe::ClientOptions;
+                loop {
+                    match ClientOptions::new().open(PIPE_NAME) {
+                        Ok(pipe) => {
+                            let mut reader = BufReader::new(pipe);
+                            let mut line = String::new();
+                            while let Ok(n) = reader.read_line(&mut line).await {
+                                if n == 0 { break; }
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                                    if let Some(msg_type) = val.get("TranscriptionPreview") {
+                                        if let (Some(text), Some(x), Some(y)) = (
+                                            msg_type.get("text").and_then(|t| t.as_str()),
+                                            msg_type.get("x").and_then(|x| x.as_i64()),
+                                            msg_type.get("y").and_then(|y| y.as_i64()),
+                                        ) {
+                                            let _ = app_handle.emit("interactive-preview", serde_json::json!({
+                                                "text": text,
+                                                "x": x,
+                                                "y": y
+                                            }));
+                                        }
+                                    }
+                                }
+                                line.clear();
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            });
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_daemon_status,
@@ -491,15 +804,42 @@ fn main() {
             delete_model,
             get_models_dir,
             set_models_dir,
+            open_models_dir,
             test_model,
             check_stt_status,
             download_model,
+            auto_convert_hf_model,
             pick_folder,
             check_faster_whisper,
             install_faster_whisper,
             start_faster_whisper,
             stop_faster_whisper,
             set_stt_mode,
+            get_history,
+            delete_history,
+            delete_all_history,
+            get_blacklist,
+            add_blacklist,
+            remove_blacklist,
+            delete_all_data,
+            get_notes,
+            get_note,
+            create_note,
+            update_note,
+            pin_note,
+            delete_note,
+            search_notes,
+            start_meeting,
+            stop_meeting,
+            get_dictionary,
+            add_dictionary,
+            remove_dictionary,
+            get_snippets,
+            add_snippet,
+            remove_snippet,
+            get_usage_stats,
+            inject_text,
+            cancel_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error running Zero Studio");

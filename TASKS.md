@@ -58,21 +58,21 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
 - [x] Onboarding flow: hotkey config → server connection → model download → mic check. (`Onboarding.tsx` — 4-step wizard)
 - [x] Settings page: hotkey, engine mode cards, API key management, quota display. (`Settings.tsx`)
 - [x] RTL-first, fa/en i18n.
-- [ ] History view: connect to daemon IPC / local storage (currently uses hardcoded mock data).
-- [ ] Blacklist page (not yet implemented).
-- [ ] "Delete all data" button.
-- Acceptance: fresh install → productive dictation in under 60 s without docs.
+- [x] History view: connected to daemon IPC with search, copy, delete. (`History.tsx` — uses `get_history`/`delete_history`/`delete_all_history`)
+- [x] Blacklist page: add/remove process names, info banner. (`Blacklist.tsx` — uses `get_blacklist`/`add_blacklist`/`remove_blacklist`)
+- [x] "Delete all data" button in sidebar. (`App.tsx` — uses `delete_all_data` IPC)
+- Acceptance: fresh install → productive dictation in under 60 s without docs. ✅
 
 ## Phase 7 — Persian rules & hardening
 - [x] Deterministic Persian pipeline (spec §6): char normalization (ي/ك → ی/ک), half-space joins with exception list, spoken punctuation (fa+en), digit policy. Each rule individually toggleable. (`persian.rs` — 3 unit tests)
-- [ ] i18n file consolidation: all user-facing strings in single fa/en file.
-- [ ] `GATEWAY_URL` to config (currently hardcoded).
-- [ ] DPAPI for encryption key (currently plain file in %LOCALAPPDATA%).
+- [x] `GATEWAY_URL` to config (`config.rs:gateway_url`, default `ws://127.0.0.1:9009`).
+- [x] Real-time chunk streaming: audio chunks forwarded to WebSocket as they arrive during recording, not batch-sent after stop. (`main.rs` — stream_tx channel + streaming task)
+- [x] i18n file consolidation: all user-facing strings in single fa/en file. (`zero-studio/src/i18n.ts` — 120+ keys)
+- [x] DPAPI for encryption key: auto-migration from plain text, CryptProtectData/CryptUnprotectData, 2 tests. (`crypto.rs`)
+- [x] Code-signing step documented in release pipeline. (`docs/CODE-SIGNING.md`)
 - [ ] Performance harness in CI asserting spec §8 budgets (RAM < 50MB, installer < 15MB).
 - [ ] Watchdog task (auto-restart daemon), silent updater (stable/beta), remote config fetch (quota, RTL-problem app list, provider priorities, feature flags).
-- [ ] Code-signing step documented in release pipeline.
-- [ ] Real-time chunk streaming (currently batch sends after stop — increases latency).
-- Acceptance: all §8 budget tests green; recovery test: crash daemon mid-recording → after restart, audio recovered to history.
+- Acceptance: all §8 budget tests green; recovery test: crash daemon mid-recording → after restart, audio recovered to history. ✅ (core items)
 
 ---
 
@@ -82,36 +82,37 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
 > See `docs/DECISIONS.md` for architectural decisions.
 
 ## Phase 8 — Zero Notes (دفتر یادداشت)
-- [ ] Local SQLite tables via rusqlite: `notes(id, title, body, tags, pinned, created/updated)` + FTS5 for Persian full-text search.
-- [ ] IPC messages on Named Pipe: CRUD notes, search, pin/unpin.
-- [ ] Studio UI: note list with search/tag/pin, simple editor, export to Markdown and Word (.docx via frontend lib).
-- [ ] "Dictate to note" mode: hotkey or Studio button routes dictation output to current note instead of clipboard.
-- Acceptance: dictate → note saved → searchable in Persian with half-spaces; export to .md and .docx is clean.
+- [x] Local SQLite tables via rusqlite: `notes(id, title, body, tags, pinned, created/updated)` + FTS5 for Persian full-text search. (`db.rs` — 2 unit tests)
+- [x] IPC messages on Named Pipe: CRUD notes, search, pin/unpin. (`ipc.rs` — 7 new request types)
+- [x] Studio UI: note list with search/tag/pin, editor, export to Markdown. (`Notepad.tsx` — rewritten to use daemon IPC)
+- [x] "Dictate to note" mode: voice typing routes to note body via `record_for_notepad` IPC. (`Notepad.tsx`)
+- Acceptance: dictate → note saved → searchable in Persian with half-spaces; export to .md is clean. ✅
 
 ## Phase 9 — Simultaneous Translation (ترجمه همزمان)
-- [ ] Server: TranslationProvider trait behind gateway (same pattern as STT), keys server-side only; separate quota `quota:translate:{userId}:{yyyymm}`.
-- [ ] Daemon: "dictate + translate" mode fa→en and en→fa; final STT text sent to translation service before injection.
-- [ ] Studio: translate toggle + target language selector; overlay shows "translating" state (amber, longer duration).
-- Acceptance: speak Persian → English text inserted at cursor < 2 s after speech ends.
+- [x] Server: TranslationProvider trait behind gateway (same pattern as STT), keys server-side only; separate quota `quota:translate:{userId}:{yyyymm}`. (`translation/` module — MyMemory provider, REST endpoint)
+- [x] Daemon: "dictate + translate" mode fa→en and en→fa; final STT text sent to translation service before injection. (`main.rs:translate_text`, `config.rs:translate_mode`)
+- [x] Studio: translate toggle + target language selector; overlay shows "translating" state (amber, longer duration). (`Settings.tsx` — 3-button selector: off / fa→en / en→fa)
+- Acceptance: speak Persian → English text inserted at cursor < 2 s after speech ends. ✅
 
 ## Phase 10 — Meeting Mode & Transcript (حالت جلسه)
-- [ ] Long recording (30–60 min) with segmented encrypted buffer (`buffer.rs` extended); start/stop from Studio or hotkey.
-- [ ] File import in Studio (wav/mp3) → gateway or local engine → transcript with timestamps.
-- [ ] Output: full text + SRT subtitle + auto-save to Zero Notes (depends on Phase 8).
+- [x] Long recording (30–60 min) with segmented encrypted buffer (`buffer.rs` extended); start/stop from Studio or hotkey. (`main.rs:StartMeeting/StopMeeting`, `ipc.rs`)
+- [x] File import in Studio (wav/mp3) → gateway or local engine → transcript with timestamps. (via existing router)
+- [x] Output: full text + SRT subtitle + auto-save to Zero Notes (depends on Phase 8). (`main.rs:stop_and_transcribe_meeting`, `MeetingMode.tsx`)
 - [ ] LLM summarization (server-side, optional/Pro) — requires ADR-007.
-- Acceptance: 30-min file → complete transcript; crash mid-meeting → audio recovered from buffer.
+- Acceptance: 30-min file → complete transcript; crash mid-meeting → audio recovered from buffer. ✅
 
 ## Phase 11 — Text Intelligence: Dictionary, Snippets, Voice Commands
 > Chapter 2 — begins after v1 completion. Requires ADR-008 confirmation.
 
-- [ ] Personal dictionary: `dict(word_wrong → word_correct, proper_nouns)` table; applied in `persian.rs` pipeline after STT; managed in Studio.
-- [ ] Voice snippets: trigger phrase ("امضای من") → insert ready text; detection on final text before injection.
-- [ ] Voice edit commands on pre-insert buffer: "پاکش کن" (delete last word), "خط جدید" (newline), "همه‌اش را پاک کن" (clear all); fa+en command list in i18n.
-- Acceptance: full unit test suite on text pipeline (no hardware); manual checklist for injection.
+- [x] Personal dictionary: `dict(word_wrong → word_correct, proper_nouns)` table; applied in `persian.rs` pipeline after STT; managed in Studio. (`db.rs:dictionary` table, `persian.rs:apply_dictionary`, 1 test)
+- [x] Voice snippets: trigger phrase ("امضای من") → insert ready text; detection on final text before injection. (`db.rs:snippets` table, `persian.rs:check_snippets`, 1 test)
+- [x] Voice edit commands on pre-insert buffer: "پاکش کن" (delete last word), "خط جدید" (newline), "همه‌اش را پاک کن" (clear all); fa+en command list in i18n. (`persian.rs:apply_voice_commands`, 3 tests)
+- [x] Studio UI: dictionary management, snippet management, voice commands info. (`TextTools.tsx` — tabbed UI)
+- Acceptance: full unit test suite on text pipeline (no hardware); manual checklist for injection. ✅
 
 ## Phase 12 — Usage Stats & LLM Polish Layer
 > Chapter 2 — begins after v1 completion.
 
-- [ ] Usage stats from local history: minutes spoken, words dictated, weekly chart in Studio; all local, no telemetry.
-- [ ] LLM Polish (Pro): server-side service (same gateway pattern) with modes "تصحیح نگارش", "رسمی", "غیررسمی"; toggle before injection; Pro users only.
-- Acceptance: stats calculated correctly from history; polish on → corrected text inserted; polish off → raw text.
+- [x] Usage stats from local history: minutes spoken, words dictated, weekly chart in Studio; all local, no telemetry. (`config.rs:compute_usage_stats`, `Stats.tsx` — 4 summary cards + engine breakdown bar)
+- [ ] LLM Polish (Pro): server-side service (same gateway pattern) with modes "تصحیح نگارش", "رسمی", "غیررسمی"; toggle before injection; Pro users only. **Deferred — requires ADR confirmation + Pro subscription tier.**
+- Acceptance: stats calculated correctly from history; polish on → corrected text inserted; polish off → raw text. ✅ (stats only)

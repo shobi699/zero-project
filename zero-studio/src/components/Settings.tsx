@@ -187,6 +187,8 @@ export default function Settings({ onSave }: SettingsProps) {
   const [hotkey, setHotkey] = useState('Ctrl+Shift+Z');
   const [unloadTimeout, setUnloadTimeout] = useState(5);
   const [overlayMode, setOverlayMode] = useState('cursor');
+  const [translateMode, setTranslateMode] = useState('off');
+  const [interactiveMode, setInteractiveMode] = useState(false);
   const [remainingQuota, setRemainingQuota] = useState(85);
   const [showSavedMsg, setShowSavedMsg] = useState(false);
   const [openaiKey, setOpenaiKey] = useState('');
@@ -203,6 +205,8 @@ export default function Settings({ onSave }: SettingsProps) {
         if (cfg.hotkey) setHotkey(cfg.hotkey);
         if (cfg.unload_timeout) setUnloadTimeout(cfg.unload_timeout);
         if (cfg.overlay_mode) setOverlayMode(cfg.overlay_mode);
+        if (cfg.translate_mode) setTranslateMode(cfg.translate_mode);
+        if (cfg.interactive_mode !== undefined) setInteractiveMode(cfg.interactive_mode);
       }
     } catch (e) {
       console.warn('Failed to load config:', e);
@@ -235,10 +239,12 @@ export default function Settings({ onSave }: SettingsProps) {
       cfg.hotkey = hotkey;
       cfg.unload_timeout = unloadTimeout;
       cfg.overlay_mode = overlayMode;
+      cfg.translate_mode = translateMode;
+      cfg.interactive_mode = interactiveMode;
       await invoke('set_config', { config: JSON.stringify(cfg) });
 
       // Also update settings in daemon live memory
-      await invoke('update_settings', { settings: JSON.stringify({ engine, hotkey, unloadTimeout, overlayMode }) });
+      await invoke('update_settings', { settings: JSON.stringify({ engine, hotkey, unloadTimeout, overlayMode, translateMode, interactiveMode }) });
 
       setShowSavedMsg(true);
       setTimeout(() => setShowSavedMsg(false), 2000);
@@ -252,6 +258,7 @@ export default function Settings({ onSave }: SettingsProps) {
     setHotkey('Ctrl+Shift+Z');
     setUnloadTimeout(5);
     setOverlayMode('cursor');
+    setTranslateMode('off');
     try {
       const res = await invoke<any>('get_config');
       let cfg = res && res.config ? JSON.parse(res.config) : {};
@@ -259,8 +266,10 @@ export default function Settings({ onSave }: SettingsProps) {
       cfg.hotkey = 'Ctrl+Shift+Z';
       cfg.unload_timeout = 5;
       cfg.overlay_mode = 'cursor';
+      cfg.translate_mode = 'off';
+      cfg.interactive_mode = false;
       await invoke('set_config', { config: JSON.stringify(cfg) });
-      await invoke('update_settings', { settings: JSON.stringify({ engine: 'hybrid', hotkey: 'Ctrl+Shift+Z', unloadTimeout: 5, overlayMode: 'cursor' }) });
+      await invoke('update_settings', { settings: JSON.stringify({ engine: 'hybrid', hotkey: 'Ctrl+Shift+Z', unloadTimeout: 5, overlayMode: 'cursor', translateMode: 'off', interactiveMode: false }) });
     } catch (e) {
       console.error('Failed to reset settings:', e);
     }
@@ -356,6 +365,71 @@ export default function Settings({ onSave }: SettingsProps) {
                 <div className="text-xs mt-1 opacity-70">ثابت در گوشه صفحه</div>
               </button>
             </div>
+          </div>
+
+          {/* Translation Mode Settings */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Globe className="w-4 h-4 text-blue-400" /> ترجمه همزمان
+            </h3>
+            <p className="text-xs text-slate-400">متن ترجمه‌شده به‌جای متن اصلی درج شود</p>
+            
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                onClick={() => setTranslateMode('off')}
+                className={`p-3 rounded-xl border-2 transition-all text-center ${
+                  translateMode === 'off'
+                    ? 'border-slate-500 bg-slate-500/10 text-white'
+                    : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <div className="text-sm font-semibold">غیرفعال</div>
+              </button>
+              <button
+                onClick={() => setTranslateMode('fa-en')}
+                className={`p-3 rounded-xl border-2 transition-all text-center ${
+                  translateMode === 'fa-en'
+                    ? 'border-blue-500 bg-blue-500/10 text-white'
+                    : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <div className="text-sm font-semibold">فارسی → انگلیسی</div>
+              </button>
+              <button
+                onClick={() => setTranslateMode('en-fa')}
+                className={`p-3 rounded-xl border-2 transition-all text-center ${
+                  translateMode === 'en-fa'
+                    ? 'border-blue-500 bg-blue-500/10 text-white'
+                    : 'border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <div className="text-sm font-semibold">انگلیسی → فارسی</div>
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Mode Settings */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Eye className="w-4 h-4 text-blue-400" /> حالت تعاملی (Interactive Preview)
+            </h3>
+            <p className="text-xs text-slate-400">نمایش یک پنجره برای بازبینی و ویرایش متن قبل از تایپ نهایی.</p>
+            
+            <label className="flex items-center gap-3 cursor-pointer mt-4">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={interactiveMode}
+                  onChange={(e) => setInteractiveMode(e.target.checked)}
+                />
+                <div className={`block w-10 h-6 rounded-full transition ${interactiveMode ? 'bg-blue-500' : 'bg-slate-700'}`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition transform ${interactiveMode ? 'translate-x-4' : ''}`}></div>
+              </div>
+              <span className="text-sm font-semibold text-slate-200">
+                فعال‌سازی پنجره پیش‌نمایش شناور
+              </span>
+            </label>
           </div>
 
         </div>
