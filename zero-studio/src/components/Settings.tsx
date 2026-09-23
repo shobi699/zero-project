@@ -4,7 +4,7 @@ import { enable, isEnabled, disable } from '@tauri-apps/plugin-autostart';
 import {
   Settings as SettingsIcon, ShieldAlert, Sliders, Volume2, Key,
   RotateCcw, Save, Eye, EyeOff, Cloud, Globe, Cpu, Zap, Check,
-  Loader2, Download, Play, Square, Palette, Monitor, Terminal, Sparkles
+  Loader2, Download, Play, Square, Palette, Monitor, Terminal, Sparkles, PanelRight
 } from 'lucide-react';
 import ModelManager from './ModelManager';
 import { THEME_PRESETS, applyThemePreset } from '../utils/themePresets';
@@ -330,6 +330,10 @@ export default function Settings({ onSave }: SettingsProps) {
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModel, setLlmModel] = useState('gpt-4o-mini');
 
+  const [enableRightPanel, setEnableRightPanel] = useState(true);
+  const [rightPanelRunning, setRightPanelRunning] = useState(false);
+  const [rpLoading, setRpLoading] = useState(false);
+
   const [remainingQuota, setRemainingQuota] = useState(85);
   const [showSavedMsg, setShowSavedMsg] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -362,8 +366,11 @@ export default function Settings({ onSave }: SettingsProps) {
         if (cfg.llm_endpoint) setLlmEndpoint(cfg.llm_endpoint);
         if (cfg.llm_api_key) setLlmApiKey(cfg.llm_api_key);
         if (cfg.llm_model) setLlmModel(cfg.llm_model);
+        if (cfg.enable_right_panel !== undefined) setEnableRightPanel(cfg.enable_right_panel);
       }
       
+      invoke<boolean>('is_right_panel_running').then(setRightPanelRunning).catch(() => {});
+
       const autostartEnabled = await isEnabled();
       setAutostart(autostartEnabled);
     } catch (e) {
@@ -376,6 +383,35 @@ export default function Settings({ onSave }: SettingsProps) {
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
+
+  const toggleRightPanel = async (enabled: boolean) => {
+    setRpLoading(true);
+    setEnableRightPanel(enabled);
+    try {
+      await invoke('set_right_panel_enabled', { enabled });
+      const running = await invoke<boolean>('is_right_panel_running');
+      setRightPanelRunning(running);
+    } catch (e) {
+      console.error('Failed to toggle right panel:', e);
+    } finally {
+      setRpLoading(false);
+    }
+  };
+
+  const restartRightPanel = async () => {
+    setRpLoading(true);
+    try {
+      await invoke('stop_right_panel');
+      await new Promise((r) => setTimeout(r, 600));
+      await invoke('start_right_panel');
+      const running = await invoke<boolean>('is_right_panel_running');
+      setRightPanelRunning(running);
+    } catch (e) {
+      console.error('Failed to restart right panel:', e);
+    } finally {
+      setRpLoading(false);
+    }
+  };
 
   const saveApiKey = async () => {
     try {
@@ -484,6 +520,7 @@ export default function Settings({ onSave }: SettingsProps) {
       cfg.llm_endpoint = llmEndpoint;
       cfg.llm_api_key = llmApiKey;
       cfg.llm_model = llmModel;
+      cfg.enable_right_panel = enableRightPanel;
       await invoke('set_config', { config: JSON.stringify(cfg) });
 
       await invoke('update_settings', {
@@ -868,6 +905,66 @@ export default function Settings({ onSave }: SettingsProps) {
                 <Sparkles className="w-3.5 h-3.5" />
                 تست پنجره پیش‌نمایش
               </button>
+            </div>
+          </div>
+
+          {/* Right Panel Dock Settings */}
+          <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <PanelRight className="w-4 h-4 text-cyan-400" /> داک و پنل روان لبه صفحه (Right Panel Dock)
+              </h3>
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1.5 ${
+                  rightPanelRunning
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${rightPanelRunning ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                  {rightPanelRunning ? 'در حال اجرا' : 'غیرفعال / متوقف'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed">
+              پنل کناری به صورت یک زبانه روان و زیبا در لبه راست مانیتور شما قرار می‌گیرد. با بردن ماوس به لبه، پنل باز شده و امکان دسترسی سریع به تایپ صوتی، یادداشت‌ها، تاریخچه کلیپ‌بورد و قطعه‌متن‌های سریع را بدون اشغال فضای صفحه فراهم می‌کند.
+            </p>
+
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={enableRightPanel}
+                    disabled={rpLoading}
+                    onChange={(e) => toggleRightPanel(e.target.checked)}
+                  />
+                  <div className={`block w-10 h-6 rounded-full transition ${enableRightPanel ? 'bg-cyan-500' : 'bg-slate-700'}`}></div>
+                  <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition transform ${enableRightPanel ? 'translate-x-4' : ''}`}></div>
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-slate-200">
+                    فعال‌سازی پنل کناری و اجرای خودکار
+                  </span>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    با اجرای نرم‌افزار، پنل کناری نیز طبق این تنظیم شروع به کار خواهد کرد
+                  </p>
+                </div>
+              </label>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  disabled={rpLoading}
+                  onClick={restartRightPanel}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-400 hover:text-cyan-300 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+                  title="راه‌اندازی مجدد پروسه پنل کناری"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${rpLoading ? 'animate-spin' : ''}`} />
+                  راه‌اندازی مجدد
+                </button>
+              </div>
             </div>
           </div>
         </div>

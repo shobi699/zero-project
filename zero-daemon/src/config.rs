@@ -81,6 +81,14 @@ pub struct DaemonConfig {
     /// Model name to use (e.g. gpt-4o-mini, llama3)
     #[serde(default = "default_llm_model")]
     pub llm_model: String,
+
+    /// Whether Right Panel (Edge Dock) is enabled and auto-launched
+    #[serde(default = "default_enable_right_panel")]
+    pub enable_right_panel: bool,
+}
+
+fn default_enable_right_panel() -> bool {
+    true
 }
 
 fn default_auto_submit_key() -> String {
@@ -146,6 +154,7 @@ impl Default for DaemonConfig {
             llm_endpoint: default_llm_endpoint(),
             llm_api_key: String::new(),
             llm_model: default_llm_model(),
+            enable_right_panel: default_enable_right_panel(),
         }
     }
 }

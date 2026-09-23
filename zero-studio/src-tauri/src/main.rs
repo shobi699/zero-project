@@ -982,6 +982,133 @@ async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     Ok(folder.map(|f| f.to_string()))
 }
 
+fn check_right_panel_running() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        if let Ok(out) = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq right-panel.exe", "/NH"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            return text.contains("right-panel.exe");
+        }
+    }
+    false
+}
+
+fn ensure_right_panel_stopped() {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/IM", "right-panel.exe"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+    }
+}
+
+fn ensure_right_panel_started(app_handle: &tauri::AppHandle) -> bool {
+    if check_right_panel_running() {
+        return true;
+    }
+
+    use tauri_plugin_shell::ShellExt;
+    if let Ok(sidecar) = app_handle.shell().sidecar("right-panel") {
+        if let Ok(_) = sidecar.spawn() {
+            return true;
+        }
+    }
+
+    let mut candidates = Vec::new();
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join("right-panel.exe"));
+            candidates.push(exe_dir.join("bin").join("right-panel.exe"));
+            if let Some(parent) = exe_dir.parent() {
+                candidates.push(parent.join("right-panel.exe"));
+                candidates.push(parent.join("bin").join("right-panel.exe"));
+                candidates.push(parent.join("target").join("release").join("right-panel.exe"));
+                candidates.push(parent.join("Zero-Studio-Portable").join("right-panel.exe"));
+            }
+        }
+    }
+
+    if let Some(data_dir) = dirs::data_local_dir() {
+        candidates.push(data_dir.join("Zero").join("bin").join("right-panel.exe"));
+    }
+
+    candidates.push(std::path::PathBuf::from("right-panel.exe"));
+    candidates.push(std::path::PathBuf::from("bin").join("right-panel.exe"));
+    candidates.push(std::path::PathBuf::from("target").join("release").join("right-panel.exe"));
+    candidates.push(std::path::PathBuf::from("Zero-Studio-Portable").join("right-panel.exe"));
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let res = std::process::Command::new(candidate)
+                    .creation_flags(0x08000000 | 0x00000008) // CREATE_NO_WINDOW | DETACHED_PROCESS
+                    .spawn();
+                if res.is_ok() {
+                    return true;
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                if std::process::Command::new(candidate).spawn().is_ok() {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+#[tauri::command]
+async fn is_right_panel_running() -> Result<bool, String> {
+    Ok(check_right_panel_running())
+}
+
+#[tauri::command]
+async fn start_right_panel(app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(ensure_right_panel_started(&app))
+}
+
+#[tauri::command]
+async fn stop_right_panel() -> Result<bool, String> {
+    ensure_right_panel_stopped();
+    Ok(true)
+}
+
+#[tauri::command]
+async fn set_right_panel_enabled(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let cfg_res = send_ipc_request(serde_json::json!({ "type": "GetConfig" }), "Config").await;
+    if let Ok(cfg_val) = cfg_res {
+        if let Some(cfg_str) = cfg_val.get("config").and_then(|c| c.as_str()) {
+            if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(cfg_str) {
+                json["enable_right_panel"] = serde_json::Value::Bool(enabled);
+                let _ = send_ipc_request(
+                    serde_json::json!({ "type": "SetConfig", "config": json.to_string() }),
+                    "Ack",
+                ).await;
+            }
+        }
+    }
+
+    if enabled {
+        ensure_right_panel_started(&app);
+    } else {
+        ensure_right_panel_stopped();
+    }
+
+    Ok(true)
+}
+
 fn main() {
     tauri::Builder::default()
         .on_window_event(|window, event| {
@@ -1160,6 +1287,25 @@ fn ensure_daemon_started(app_handle: &tauri::AppHandle) {
                 }
             });
 
+            // Auto-start Right Panel if enabled in config
+            let app_handle_for_right_panel = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                let mut should_start = true;
+                if let Ok(cfg_val) = send_ipc_request(serde_json::json!({ "type": "GetConfig" }), "Config").await {
+                    if let Some(cfg_str) = cfg_val.get("config").and_then(|c| c.as_str()) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(cfg_str) {
+                            if let Some(en) = json.get("enable_right_panel").and_then(|v| v.as_bool()) {
+                                should_start = en;
+                            }
+                        }
+                    }
+                }
+                if should_start {
+                    ensure_right_panel_started(&app_handle_for_right_panel);
+                }
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_shell::init())
@@ -1217,6 +1363,10 @@ fn ensure_daemon_started(app_handle: &tauri::AppHandle) {
             get_usage_stats,
             inject_text,
             cancel_preview,
+            is_right_panel_running,
+            start_right_panel,
+            stop_right_panel,
+            set_right_panel_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error running Zero Studio");

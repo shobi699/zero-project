@@ -47,7 +47,7 @@ export default function Notepad({ onTransferToTTS }: NotepadProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
   const [lang, setLang] = useState('fa-IR');
-  const [sttMode, setSttMode] = useState('browser');
+  const [sttMode, setSttMode] = useState('local');
   const [loading, setLoading] = useState(true);
   const [showFillModal, setShowFillModal] = useState(false);
   const [showMdPreview, setShowMdPreview] = useState(false);
@@ -221,68 +221,75 @@ export default function Notepad({ onTransferToTTS }: NotepadProps) {
   const startListening = async () => {
     setRecordError('');
     setInterimText('');
+    setIsListening(true);
 
-    if (sttMode === 'browser') {
+    try {
+      const text = await invoke<string>('record_for_notepad');
+      if (text && text.trim()) {
+        const normalized = normalizePersianText(text.trim());
+        setContent((prev) => (prev ? prev + ' ' + normalized : normalized));
+      }
+    } catch (e: any) {
+      console.warn('record_for_notepad error:', e);
       const SpeechRecognition = getSpeechRecognition();
-      if (!SpeechRecognition) {
-        setRecordError('تایپ صوتی در این مرورگر پشتیبانی نمی‌شود.');
-        return;
+      if (sttMode === 'browser' && SpeechRecognition) {
+        try {
+          const rec = new SpeechRecognition();
+          rec.lang = lang;
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.onresult = (event: any) => {
+            let interim = '';
+            let finalText = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const result = event.results[i];
+              if (result.isFinal) {
+                finalText += result[0].transcript;
+              } else {
+                interim += result[0].transcript;
+              }
+            }
+            if (finalText) {
+              const clean = normalizePersianText(finalText.trim());
+              setContent((prev) => (prev ? prev + ' ' + clean : clean));
+              setInterimText('');
+            } else {
+              setInterimText(interim);
+            }
+          };
+          rec.onerror = (event: any) => {
+            if (event.error === 'aborted' || event.error === 'no-speech') return;
+            setRecordError(`خطا: ${event.error}`);
+          };
+          rec.onend = () => {
+            setIsListening(false);
+            setInterimText('');
+            recognitionRef.current = null;
+          };
+          rec.start();
+          recognitionRef.current = rec;
+          return;
+        } catch (err: any) {
+          setRecordError('خطا در راه‌اندازی ضبط صوت مرورگر');
+        }
+      } else {
+        const msg = typeof e === 'string' ? e : (e?.message || 'خطا در تبدیل صوت یا اتصال به دیمون');
+        setRecordError(msg);
       }
-      const rec = new SpeechRecognition();
-      rec.lang = lang;
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.onresult = (event: any) => {
-        let interim = '';
-        let finalText = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) {
-            finalText += result[0].transcript;
-          } else {
-            interim += result[0].transcript;
-          }
-        }
-        if (finalText) {
-          setContent((prev) => (prev ? prev + ' ' + finalText.trim() : finalText.trim()));
-          setInterimText('');
-        } else {
-          setInterimText(interim);
-        }
-      };
-      rec.onerror = (event: any) => {
-        if (event.error === 'aborted' || event.error === 'no-speech') return;
-        setRecordError(`خطا: ${event.error}`);
-      };
-      rec.onend = () => {
-        setIsListening(false);
-        setInterimText('');
-        recognitionRef.current = null;
-      };
-      rec.start();
-      recognitionRef.current = rec;
-      setIsListening(true);
-    } else {
-      setIsListening(true);
-      try {
-        const text = await invoke<string>('record_for_notepad');
-        if (text) {
-          setContent((prev) => (prev ? prev + ' ' + text : text));
-        }
-      } catch (e: any) {
-        setRecordError(typeof e === 'string' ? e : 'خطا در تبدیل صوت');
-      }
+    } finally {
       setIsListening(false);
+      setInterimText('');
     }
   };
 
-  const stopListening = () => {
-    if (sttMode === 'browser' && recognitionRef.current) {
+  const stopListening = async () => {
+    if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
-    } else {
-      invoke('trigger_record').catch(() => {});
     }
+    try {
+      await invoke('trigger_record');
+    } catch (_) {}
     setIsListening(false);
     setInterimText('');
   };
@@ -413,14 +420,29 @@ export default function Notepad({ onTransferToTTS }: NotepadProps) {
                 </div>
               </div>
 
+              {recordError && (
+                <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-lg p-2.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>{recordError}</span>
+                  </div>
+                  <button onClick={() => setRecordError('')} className="text-slate-400 hover:text-white">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {isListening && (
                 <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
-                    <span className="text-xs font-bold text-rose-400">در حال گوش دادن...</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                      <span className="text-xs font-bold text-rose-400">در حال ضبط صدای شما از میکروفون...</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400">برای پایان روی دکمه توقف بزنید</span>
                   </div>
                   {interimText && (
-                    <p className="text-xs text-slate-400 dir-auto text-right pr-4">{interimText}</p>
+                    <p className="text-xs text-slate-300 dir-auto text-right pr-4">{interimText}</p>
                   )}
                 </div>
               )}

@@ -379,10 +379,13 @@ async fn handle_client(
                                 let models_dir = crate::config::resolve_models_dir();
                                 let model_path = models_dir.join(&model_id);
                                 if model_path.exists() && crate::config::is_valid_ggml_model(&model_path) {
-                                    crate::config::update_config(|c| c.active_model = model_id.clone());
+                                    crate::config::update_config(|c| {
+                                        c.active_model = model_id.clone();
+                                        c.stt_mode = "local".to_string();
+                                    });
                                     let mut loaded = crate::local_engine::LOCAL_ENGINE_LOADED.lock().unwrap();
                                     *loaded = false;
-                                    info!("SetActiveModel: switched active model to '{}' and invalidated engine cache", model_id);
+                                    info!("SetActiveModel: switched active model to '{}' (stt_mode: local) and invalidated engine cache", model_id);
                                     IpcResponse::Ack { ok: true }
                                 } else {
                                     warn!("SetActiveModel: model file not found or invalid: {}", model_path.display());
