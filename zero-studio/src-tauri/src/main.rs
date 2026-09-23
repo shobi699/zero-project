@@ -673,65 +673,86 @@ async fn install_faster_whisper() -> Result<String, String> {
 #[tauri::command]
 async fn start_faster_whisper() -> Result<String, String> {
     // Check if already running
-    let health = reqwest::get("http://127.0.0.1:8787/health").await;
-    if health.is_ok() {
-        return Ok("server already running".to_string());
-    }
-
-    // Find the server script
-    let script_path = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("tools")
-        .join("faster-whisper-server")
-        .join("server.py");
-
-    if !script_path.exists() {
-        // Try alternative path (when running from src-tauri)
-        let alt = std::path::PathBuf::from("D:\\zero-project\\tools\\faster-whisper-server\\server.py");
-        if alt.exists() {
-            return start_fw_server(&alt).await;
+    if let Ok(resp) = reqwest::get("http://127.0.0.1:8787/health").await {
+        if resp.status().is_success() {
+            return Ok("server already running".to_string());
         }
-        return Err("server.py not found".to_string());
     }
 
-    start_fw_server(&script_path).await
+    let mut candidates = Vec::new();
+    if let Ok(cur) = std::env::current_dir() {
+        candidates.push(cur.join("tools").join("faster-whisper-server").join("server.py"));
+        if let Some(p) = cur.parent() {
+            candidates.push(p.join("tools").join("faster-whisper-server").join("server.py"));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("tools").join("faster-whisper-server").join("server.py"));
+            if let Some(p) = exe_dir.parent() {
+                candidates.push(p.join("tools").join("faster-whisper-server").join("server.py"));
+            }
+        }
+    }
+    candidates.push(std::path::PathBuf::from("D:\\zero-project\\tools\\faster-whisper-server\\server.py"));
+    if let Some(data) = dirs::data_local_dir() {
+        candidates.push(data.join("Zero").join("tools").join("faster-whisper-server").join("server.py"));
+    }
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return start_fw_server(candidate).await;
+        }
+    }
+
+    Err("فایل tools/faster-whisper-server/server.py یافت نشد".to_string())
 }
 
 async fn start_fw_server(script_path: &std::path::Path) -> Result<String, String> {
-    let _ = tokio::process::Command::new("python")
-        .arg(script_path)
-        .arg("8787")
-        .spawn()
-        .map_err(|e| format!("failed to start server: {}", e))?;
-
-    // Wait a bit for server to start
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    // Verify it's running
-    match reqwest::get("http://127.0.0.1:8787/health").await {
-        Ok(_) => Ok("Faster-Whisper server started on port 8787".to_string()),
-        Err(e) => Err(format!("server started but health check failed: {}", e)),
+    let script_dir = script_path.parent().unwrap_or(script_path);
+    let mut cmd = tokio::process::Command::new("python");
+    cmd.current_dir(script_dir);
+    cmd.arg(script_path);
+    cmd.arg("8787");
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+
+    cmd.spawn().map_err(|e| format!("خطا در اجرای مفسر پایتون: {}", e))?;
+
+    // Poll health endpoint for up to 15 seconds (30 attempts x 500ms)
+    for _ in 0..30 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(resp) = reqwest::get("http://127.0.0.1:8787/health").await {
+            if resp.status().is_success() {
+                return Ok("سرور Faster-Whisper با موفقیت روی پورت 8787 راه‌اندازی شد".to_string());
+            }
+        }
+    }
+
+    Err("سرور پایتون اجرا شد اما در مدت زمان مجاز به درخواست پاسخ نداد.".to_string())
 }
 
 #[tauri::command]
 async fn stop_faster_whisper() -> Result<String, String> {
-    // Find and kill python process running server.py
     #[cfg(target_os = "windows")]
     {
-        let _ = tokio::process::Command::new("taskkill")
-            .args(["/F", "/IM", "python.exe", "/FI", "WINDOWTITLE eq *server*"])
-            .output()
-            .await;
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("powershell")
+            .args(["-Command", "Get-NetTCPConnection -LocalPort 8787 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"])
+            .creation_flags(0x08000000)
+            .output();
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = tokio::process::Command::new("pkill")
-            .arg("-f", "server.py")
+            .arg("-f")
+            .arg("server.py")
             .output()
             .await;
     }
-    Ok("Faster-Whisper server stopped".to_string())
+    Ok("سرور متوقف شد".to_string())
 }
 
 #[tauri::command]

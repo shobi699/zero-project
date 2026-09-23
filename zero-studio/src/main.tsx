@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import App from './App'
 import InteractivePreview from './components/InteractivePreview'
+import './utils/browserPolyfill'
 import './index.css'
 
 let windowLabel = 'main';

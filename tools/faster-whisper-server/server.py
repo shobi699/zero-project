@@ -66,19 +66,33 @@ def load_model(model_id: str = "base"):
     print(f"Model {model_id} loaded successfully on {device}")
 
 
-@app.on_event("startup")
-async def startup():
-    # Load default model
+import threading
+
+is_loading = False
+
+def background_load_model(model_id: str = "base"):
+    global is_loading
+    if is_loading:
+        return
+    is_loading = True
     try:
-        load_model("base")
+        load_model(model_id)
     except Exception as e:
         print(f"Warning: Could not load default model: {e}")
+    finally:
+        is_loading = False
+
+
+@app.on_event("startup")
+async def startup():
+    # Load default model in background thread so HTTP server starts instantly
+    threading.Thread(target=background_load_model, args=("base",), daemon=True).start()
 
 
 @app.get("/health")
 async def health():
     return {
-        "status": "ok" if model else "no_model",
+        "status": "ok" if model else ("loading" if is_loading else "ready"),
         "model": model_name,
         "device": device,
         "compute_type": compute_type,
