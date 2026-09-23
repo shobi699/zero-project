@@ -1,0 +1,1492 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face {
+    font-family: 'Vazirmatn';
+    src: local('Vazirmatn'), local('Vazirmatn RD'), local('Vazir'), local('Segoe UI Variable Text'), local('Segoe UI');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  :root {
+    --liquid: #0d0f14; --ink: #ffffff; --inv: #38bdf8; --inv-ink: #000000;
+    --soft: rgba(255,255,255,.07); --soft2: rgba(255,255,255,.13); --muted: rgba(255,255,255,.55); --line: rgba(255,255,255,.12);
+    --w: 78px; --spring: cubic-bezier(.22,1.28,.36,1); --pop: cubic-bezier(.34,1.56,.64,1);
+    --acrylic-blur: 24px;
+  }
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+  html, body { height: 100%; margin: 0; background: transparent; overflow: hidden; }
+  body {
+    font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', Tahoma, system-ui, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    direction: rtl;
+  }
+  button { font: inherit; color: inherit; }
+  input, textarea, select { -webkit-user-select: text; user-select: text; font-family: inherit; }
+  svg.i, .ic svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- the tab: shape from edge-widget.html, moved by springs ---------- */
+  .tab-ui {
+    position: fixed; right: 0; top: 50%; width: var(--w); padding: 22px 0;
+    background: color-mix(in srgb, var(--liquid) 88%, transparent);
+    backdrop-filter: blur(var(--acrylic-blur)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(180%);
+    border: 1px solid var(--line);
+    border-right: none;
+    border-radius: 26px 0 0 26px;
+    display: flex; flex-direction: column; align-items: center;
+    transform-origin: right center; transform: translate(120%, -50%); will-change: transform;
+    box-shadow: -18px 0 40px -15px rgba(0,0,0,.6);
+    z-index: 10;
+  }
+  .tab-ui::before, .tab-ui::after { content: ""; position: absolute; right: 0; width: var(--f, 26px); height: var(--f, 26px); pointer-events: none; }
+  .tab-ui::before { bottom: 100%; background: radial-gradient(circle at 0 0, transparent calc(var(--f, 26px) - .5px), color-mix(in srgb, var(--liquid) 88%, transparent) var(--f, 26px)); }
+  .tab-ui::after  { top: 100%;    background: radial-gradient(circle at 0 100%, transparent calc(var(--f, 26px) - .5px), color-mix(in srgb, var(--liquid) 88%, transparent) var(--f, 26px)); }
+
+  .tools { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; max-height: calc(100vh - 190px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; padding: 4px 8px; }
+  .tools::-webkit-scrollbar { display: none; }
+  .tab-sep { width: 30px; height: 1px; background: var(--line); margin: 10px 0; flex: none; }
+  .tool {
+    position: relative; z-index: 1; flex: none; width: 44px; height: 44px; border: 0; border-radius: 14px; background: var(--soft); font-size: 19px;
+    display: grid; place-items: center; cursor: pointer; will-change: transform, opacity;
+    transition: background .25s, color .25s, border-radius .35s var(--spring), box-shadow .25s;
+  }
+  .tool svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tool img { width: 26px; height: 26px; object-fit: contain; pointer-events: none; }
+  .tool:hover { background: var(--soft2); border-radius: 18px; }
+  .tool.app { background: transparent; }
+  .tool.app:hover { background: var(--soft2); }
+  .tool.active { background: transparent; color: var(--inv-ink); }
+  .tool.on::after, .tile.on::after { content: ""; position: absolute; left: 4px; top: 4px; width: 7px; height: 7px; border-radius: 50%; background: #34c759; box-shadow: 0 0 0 2px var(--liquid); }
+  .tool.ghost, .tile.ghost, .wrow.ghost { opacity: .35 !important; }
+
+  /* voice pulsating state on dock button */
+  .tool[data-w="voice"].recording {
+    background: rgba(239, 68, 68, 0.25) !important;
+    color: #ef4444 !important;
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.65);
+    animation: voiceTilePulse 1.2s infinite alternate ease-in-out;
+  }
+  @keyframes voiceTilePulse {
+    0% { transform: scale(1); box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
+    100% { transform: scale(1.08); box-shadow: 0 0 22px rgba(239, 68, 68, 0.85); }
+  }
+
+  /* liquid pill behind the active tool */
+  .pill { position: absolute; left: 50%; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 22px; background: var(--inv); z-index: 0; pointer-events: none; will-change: transform; transform: scale(0); }
+  .ph-dock { flex: none; width: 34px; height: 6px; border-radius: 3px; background: var(--inv); opacity: .8; animation: phIn .25s var(--pop); }
+  @keyframes phIn { from { transform: scale(.2); opacity: 0; } }
+
+  /* ---------- flyout panel ---------- */
+  .fly-ui {
+    position: fixed; right: calc(var(--w) + 12px); top: 0; width: 330px; visibility: hidden;
+    background: color-mix(in srgb, var(--liquid) 92%, transparent);
+    backdrop-filter: blur(var(--acrylic-blur)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(180%);
+    border: 1px solid var(--line);
+    border-radius: 22px; transform-origin: right center;
+    box-shadow: 0 30px 60px -15px rgba(0,0,0,.65); will-change: transform, opacity, border-radius;
+    z-index: 9;
+  }
+  .panel { display: none; flex-direction: column; gap: 11px; padding: 18px; }
+  .panel.on { display: flex; }
+  .panel.on > * { animation: rise .4s cubic-bezier(.2,.8,.2,1) both; }
+  .panel.on > :nth-child(2) { animation-delay: .03s; } .panel.on > :nth-child(3) { animation-delay: .06s; }
+  .panel.on > :nth-child(4) { animation-delay: .09s; } .panel.on > :nth-child(n+5) { animation-delay: .12s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); filter: blur(4px); } }
+
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
+  .head h4 { flex: 1; margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .02em; }
+  .back { display: none; border: 0; background: var(--soft); color: var(--ink); width: 26px; height: 24px; border-radius: 8px; cursor: pointer; font-size: 13px; line-height: 1; }
+  .back:hover { background: var(--soft2); }
+  .fly-ui.sub .back { display: inline-grid; place-items: center; }
+  .link { border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 3px 8px; border-radius: 8px; transition: color .2s, background .2s; }
+  .link:hover { color: var(--ink); background: var(--soft); }
+  .field { width: 100%; border: 0; outline: 0; border-radius: 12px; background: var(--soft); color: var(--ink); padding: 9px 12px; font: inherit; font-size: 13px; transition: background .2s, box-shadow .2s; }
+  .field:focus { background: var(--soft2); box-shadow: inset 0 0 0 1px var(--inv); }
+  .field::placeholder { color: var(--muted); opacity: .7; }
+  select.field { appearance: none; cursor: pointer; }
+  select.field option { background: #181920; color: #fff; }
+  .scroll { overflow-y: auto; scrollbar-width: none; }
+  .scroll::-webkit-scrollbar { display: none; }
+  .spring { transition: transform .35s var(--pop), background .2s; }
+  .btn { border: 0; background: var(--soft); border-radius: 12px; padding: 9px 12px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .2s, transform .2s var(--pop); }
+  .btn:hover { background: var(--soft2); transform: translateY(-1px); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--inv); color: var(--inv-ink); font-weight: 700; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .empty { color: var(--muted); font-size: 12px; text-align: center; padding: 12px 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 0; background: var(--soft); border-radius: 99px; padding: 5px 12px; font-size: 12px; cursor: pointer; transition: background .2s; }
+  .chip:hover { background: var(--soft2); }
+  .chip.on { background: var(--inv); color: var(--inv-ink); font-weight: 600; }
+
+  /* voice widget styles */
+  .voice-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px 0 8px; gap: 10px; }
+  .voice-mic-btn {
+    position: relative; width: 72px; height: 72px; border-radius: 50%; border: 0;
+    background: var(--inv); color: var(--inv-ink); cursor: pointer; display: grid; place-items: center;
+    transition: transform .35s var(--pop), box-shadow .3s, background .3s;
+  }
+  .voice-mic-btn:hover { transform: scale(1.08); }
+  .voice-mic-btn:active { transform: scale(0.92); }
+  .voice-mic-btn svg { width: 32px; height: 32px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .voice-mic-btn.recording {
+    background: #ef4444; color: #ffffff; box-shadow: 0 0 24px rgba(239,68,68,.75);
+    animation: voiceMicPulse 1.3s infinite ease-in-out;
+  }
+  @keyframes voiceMicPulse {
+    0% { transform: scale(1); box-shadow: 0 0 10px rgba(239,68,68,.5); }
+    50% { transform: scale(1.12); box-shadow: 0 0 28px rgba(239,68,68,.9); }
+    100% { transform: scale(1); box-shadow: 0 0 10px rgba(239,68,68,.5); }
+  }
+  .voice-card { background: var(--soft); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); }
+  .voice-card-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
+  .voice-preview-box { min-height: 75px; max-height: 150px; overflow-y: auto; font-size: 13.5px; line-height: 1.6; word-break: break-word; color: var(--ink); white-space: pre-wrap; }
+  .voice-status-badge { font-size: 11px; padding: 3px 8px; border-radius: 99px; background: var(--soft2); color: var(--muted); }
+  .voice-status-badge.live { background: rgba(239,68,68,.2); color: #ef4444; font-weight: 600; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #34c759; display: inline-block; }
+  .live-dot.rec { background: #ef4444; animation: blink 1s infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .voice-hint { font-size: 11.5px; color: var(--muted); text-align: center; }
+  .voice-footer { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); padding-top: 6px; border-top: 1px solid var(--line); }
+
+  /* lists (clipboard, snippets, units…) */
+  .list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; }
+  .item { position: relative; text-align: right; border: 0; background: var(--soft); border-radius: 12px; padding: 9px 12px 9px 54px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); flex: none; }
+  .item:hover { background: var(--soft2); transform: translateX(-4px); }
+  .item small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+  .item .acts { position: absolute; left: 6px; right: auto; top: 50%; transform: translateY(-50%); display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+  .item:hover .acts, .item.pinned .acts { opacity: 1; }
+  .item .acts span { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; font-size: 12px; color: var(--muted); }
+  .item .acts span:hover { background: var(--soft2); color: var(--ink); }
+  .item.pinned { box-shadow: inset -3px 0 0 var(--inv); }
+  .item.plain { padding-left: 12px; }
+  .gen { display: flex; justify-content: space-between; gap: 8px; }
+  .gen span { color: var(--muted); font-size: 11px; font-family: Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; direction: ltr; }
+
+  /* color */
+  .cur { display: flex; gap: 10px; align-items: stretch; }
+  .big { width: 64px; border-radius: 14px; position: relative; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+  .big input { position: absolute; inset: -10px; width: 200%; height: 200%; opacity: 0; cursor: pointer; }
+  .fmts { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .fmt { border: 0; background: var(--soft); border-radius: 9px; padding: 5px 9px; font-size: 12px; text-align: right; cursor: pointer; font-family: Consolas, monospace; display: flex; justify-content: space-between; direction: ltr; }
+  .fmt:hover { background: var(--soft2); }
+  .fmt i { font-style: normal; color: var(--muted); font-family: "Segoe UI", sans-serif; font-size: 10px; }
+  .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 7px; }
+  .swatches button { aspect-ratio: 1; border: 0; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+  .swatches button:hover { transform: scale(1.25); }
+
+  textarea.field { resize: none; height: 200px; line-height: 1.6; font-size: 13px; }
+
+  /* tiles & grid3 */
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tiles { max-height: 400px; min-height: 70px; overflow-y: auto; scrollbar-width: none; align-content: start; }
+  .tiles::-webkit-scrollbar { display: none; }
+  .tile, .grid3 > button { position: relative; border: 0; background: var(--soft); border-radius: 14px; padding: 13px 4px; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--ink);
+    transition: transform .35s var(--pop), background .2s, border-radius .35s var(--spring); }
+  .tile b, .grid3 > button b { font-size: 17px; font-weight: 600; height: 24px; display: grid; place-items: center; }
+  .tile b svg, .grid3 > button b svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .tile b img { width: 24px; height: 24px; object-fit: contain; }
+  .tile:hover, .grid3 > button:hover { background: var(--soft2); transform: translateY(-3px); border-radius: 18px; }
+  .tile.on { background: var(--inv); color: var(--inv-ink); }
+  .ph-tile { border-radius: 14px; border: 2px dashed var(--muted); min-height: 66px; animation: phIn .25s var(--pop); }
+  .hint { font-size: 11px; color: var(--muted); text-align: center; }
+
+  .mrow { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 4px 0; }
+  .mb { width: 52px; height: 52px; border: 0; border-radius: 50%; background: var(--soft); display: grid; place-items: center; cursor: pointer; }
+  .mb:hover { background: var(--soft2); transform: scale(1.08); }
+  .mb:active { transform: scale(.9); }
+  .mb.big { width: 64px; height: 64px; background: var(--inv); color: var(--inv-ink); }
+  .mb svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .mb.big svg { fill: currentColor; }
+  .display { font-size: 26px; font-weight: 600; text-align: left; font-variant-numeric: tabular-nums; padding: 4px 6px; min-height: 40px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; direction: ltr; }
+  .timer { font-size: 44px; font-weight: 300; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: .02em; direction: ltr; }
+  input[type=range] { width: 100%; accent-color: var(--inv); }
+  .pw { font-family: Consolas, monospace; font-size: 14px; word-break: break-all; background: var(--soft); border-radius: 12px; padding: 10px 12px; cursor: pointer; -webkit-user-select: text; direction: ltr; text-align: left; }
+  .zone { display: flex; align-items: center; gap: 10px; background: var(--soft); border-radius: 12px; padding: 8px 10px 8px 12px; }
+  .zone .zt { font-size: 22px; font-weight: 300; font-variant-numeric: tabular-nums; min-width: 64px; direction: ltr; text-align: left; }
+  .zone .zn { flex: 1; font-size: 13px; line-height: 1.2; text-align: right; }
+  .zone .zn small { display: block; color: var(--muted); font-size: 10px; }
+  .zone .x { border: 0; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; width: 22px; height: 22px; }
+  .zone .x:hover { background: var(--soft2); color: var(--ink); }
+
+  /* settings */
+  .set { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 4px 2px; }
+  .toggle { width: 40px; height: 24px; border-radius: 99px; background: var(--soft2); border: 0; position: relative; cursor: pointer; transition: background .25s; flex: none; }
+  .toggle::after { content: ""; position: absolute; right: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .4s var(--pop); box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .toggle.on { background: #34c759; }
+  .toggle.on::after { transform: translateX(-16px); }
+  .tabs { display: flex; background: var(--soft); border-radius: 11px; padding: 3px; gap: 2px; }
+  .tabs button { flex: 1; border: 0; background: none; border-radius: 8px; padding: 6px 0; font-size: 12px; cursor: pointer; color: var(--muted); transition: background .25s, color .25s; }
+  .tabs button.on { background: var(--inv); color: var(--inv-ink); font-weight: 700; }
+  .spage { display: none; flex-direction: column; gap: 8px; }
+  .spage.on { display: flex; animation: rise .4s cubic-bezier(.2,.8,.2,1) both; }
+  .wsec { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; padding: 4px 2px 0; display: flex; justify-content: space-between; }
+  .wlist { display: flex; flex-direction: column; gap: 4px; min-height: 36px; border-radius: 12px; }
+  .wlist.drop { box-shadow: inset 0 0 0 2px var(--line); }
+  .wrow { display: flex; align-items: center; gap: 7px; background: var(--soft); border-radius: 11px; padding: 5px 8px 5px 5px; font-size: 13px; cursor: grab; transition: background .2s, opacity .2s; flex: none; }
+  .wrow:hover { background: var(--soft2); }
+  .wrow.off { opacity: .4; }
+  .wrow .grip { color: var(--muted); font-size: 12px; letter-spacing: -2px; width: 10px; }
+  .wrow .wi { width: 22px; height: 22px; display: grid; place-items: center; font-size: 14px; flex: none; }
+  .wrow .wi svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .wrow .wi img { width: 19px; height: 19px; object-fit: contain; }
+  .wrow .wn { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wrow .wb { border: 0; background: none; color: var(--muted); height: 24px; min-width: 24px; padding: 0 6px; border-radius: 7px; cursor: pointer; font-size: 11px; display: grid; place-items: center; flex: none; }
+  .wrow .wb:hover { background: var(--soft2); color: var(--ink); }
+  .ph-row { height: 34px; border-radius: 11px; border: 2px dashed var(--muted); flex: none; }
+  .themes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .theme { border: 0; background: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); padding: 0; }
+  .theme i { width: 46px; height: 46px; border-radius: 15px; position: relative; display: block; box-shadow: inset 0 0 0 1px rgba(128,128,128,.35); transition: transform .35s var(--pop), border-radius .35s var(--spring); }
+  .theme i::after { content: ""; position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px; border-radius: 50%; background: var(--dot); }
+  .theme:hover i { transform: scale(1.08); border-radius: 19px; }
+  .theme.on { color: var(--ink); }
+  .theme.on i { box-shadow: 0 0 0 2px var(--liquid), 0 0 0 4px var(--inv); }
+  .theme input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+
+  /* left-edge mirror */
+  body.left .tab-ui { left: 0; right: auto; border-radius: 0 26px 26px 0; border-left: none; border-right: 1px solid var(--line); transform-origin: left center; box-shadow: 18px 0 40px -15px rgba(0,0,0,.6); }
+  body.left .tab-ui::before, body.left .tab-ui::after { left: 0; right: auto; }
+  body.left .tab-ui::before { background: radial-gradient(circle at 100% 0, transparent calc(var(--f, 26px) - .5px), color-mix(in srgb, var(--liquid) 88%, transparent) var(--f, 26px)); }
+  body.left .tab-ui::after { background: radial-gradient(circle at 100% 100%, transparent calc(var(--f, 26px) - .5px), color-mix(in srgb, var(--liquid) 88%, transparent) var(--f, 26px)); }
+  body.left .fly-ui { left: calc(var(--w) + 12px); right: auto; transform-origin: left center; }
+  body.left .item:hover { transform: translateX(4px); }
+  body.left .toast { left: 100px; right: auto; }
+  body.left .drop-hint { left: 10px; right: auto; }
+
+  /* dropping files */
+  .drop-hint { position: fixed; top: 12px; bottom: 12px; right: 10px; left: auto; width: 330px; border: 2px dashed var(--inv); border-radius: 26px; background: color-mix(in srgb, var(--liquid) 90%, transparent);
+    display: none; place-items: center; text-align: center; padding: 20px; font-size: 15px; color: var(--ink); z-index: 5; }
+  .drop-hint.on { display: grid; animation: rise .3s var(--pop) both; }
+  .drop-hint b { display: block; font-size: 30px; margin-bottom: 8px; }
+
+  /* clipboard images */
+  .item.shot { padding: 8px 8px 8px 8px; }
+  .item.shot img { display: block; width: 100%; max-height: 120px; object-fit: contain; border-radius: 8px; background: var(--soft2); }
+  .item.shot small { margin-top: 6px; }
+
+  /* dragging a widget */
+  .drag-ghost { position: fixed; z-index: 99; pointer-events: none; opacity: .9; transform: translate(-50%, -50%) scale(1.06); filter: drop-shadow(0 10px 20px rgba(0,0,0,.45)); }
+
+  /* floating edge handle visible when panel is closed */
+  .edge-handle {
+    position: fixed; right: 0; top: 50%; width: 9px; height: 86px;
+    margin-top: -43px;
+    background: color-mix(in srgb, var(--inv) 75%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--line);
+    border-right: none;
+    border-radius: 10px 0 0 10px;
+    box-shadow: -2px 0 14px color-mix(in srgb, var(--inv) 40%, transparent);
+    cursor: pointer;
+    z-index: 100;
+    transition: width .25s var(--spring), opacity .25s, background .25s, box-shadow .25s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .edge-handle:hover {
+    width: 15px;
+    background: var(--inv);
+    box-shadow: -4px 0 22px var(--inv);
+  }
+  .edge-handle .handle-bar {
+    width: 3px; height: 34px; border-radius: 2px;
+    background: rgba(255, 255, 255, 0.9);
+    transition: height .2s, background .2s;
+  }
+  .edge-handle:hover .handle-bar {
+    height: 44px;
+    background: #000;
+  }
+  body.left .edge-handle {
+    left: 0; right: auto;
+    border-radius: 0 10px 10px 0;
+    border-left: none;
+    border-right: 1px solid var(--line);
+    box-shadow: 2px 0 14px color-mix(in srgb, var(--inv) 40%, transparent);
+  }
+  body.left .edge-handle:hover {
+    box-shadow: 4px 0 22px var(--inv);
+  }
+
+  .toast { position: fixed; right: 100px; bottom: 20px; background: var(--liquid); color: var(--ink); padding: 8px 16px; border-radius: 999px; font-size: 12.5px; opacity: 0; transform: translateY(16px) scale(.8);
+    transition: opacity .25s, transform .55s var(--pop); pointer-events: none; box-shadow: 0 0 0 1px var(--line), 0 10px 30px -10px rgba(0,0,0,.6); z-index: 999; }
+  .toast.show { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+
+<div class="edge-handle" id="edgeHandle" title="پنل کناری Zero (با بردن ماوس یا کلیک باز می‌شود)">
+  <div class="handle-bar"></div>
+</div>
+
+<div class="tab-ui" id="tabUi">
+  <div class="pill" id="pill"></div>
+  <div class="tools" id="tools"></div>
+  <div class="tab-sep"></div>
+  <button class="tool" data-w="settings" title="تنظیمات"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+</div>
+
+<div class="fly-ui" id="flyUi">
+
+  <!-- Voice Dictation Panel (Zero Voice Widget) -->
+  <div class="panel" data-name="voice">
+    <div class="head">
+      <button class="back" title="بازگشت">←</button>
+      <h4>تایپ صوتی هوشمند Zero</h4>
+      <span class="voice-status-badge" id="voiceStatusBadge">آماده</span>
+    </div>
+    
+    <div class="voice-hero">
+      <button class="voice-mic-btn" id="voiceTriggerBtn" title="برای شروع یا توقف ضبط کلیک کنید">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+        </svg>
+      </button>
+      <div class="voice-hint" id="voiceHint">کلیک کنید یا دکمه میانبر کیبورد را بفشارید</div>
+    </div>
+
+    <div class="voice-card">
+      <div class="voice-card-head">
+        <span>پیش‌نمایش زنده گفتار</span>
+        <span class="live-dot" id="voiceLiveDot"></span>
+      </div>
+      <div class="voice-preview-box scroll" id="voicePreviewText">متن در حال صحبت در این کادر ظاهر می‌شود...</div>
+    </div>
+
+    <div class="row">
+      <button class="btn primary" id="voiceDeliverBtn">درج در نرم‌افزار</button>
+      <button class="btn" id="voiceCopyBtn">کپی متن</button>
+      <button class="btn" id="voiceClearBtn">پاک‌سازی</button>
+    </div>
+
+    <div class="voice-footer">
+      <span id="voiceModelInfo">موتور: Whisper آفلاین</span>
+      <button class="link" id="voiceGoSettings">تنظیمات صوتی ⚙</button>
+    </div>
+  </div>
+
+  <div class="panel" data-name="emoji">
+    <div class="head"><button class="back" title="بازگشت">←</button><input class="field" id="emojiSearch" placeholder="جستجوی ایموجی…"></div>
+    <div class="cats" id="cats"></div>
+    <div class="emoji-grid scroll" id="emojiGrid"></div>
+  </div>
+
+  <div class="panel" data-name="clip">
+    <div class="head"><button class="back">←</button><h4>تاریخچه کلیپ‌بورد</h4><button class="link" id="clipClear">پاک‌سازی</button></div>
+    <input class="field" id="clipSearch" placeholder="جستجو در تاریخچه…">
+    <div class="list scroll" id="clipList"></div>
+  </div>
+
+  <div class="panel" data-name="color">
+    <div class="head"><button class="back">←</button><h4>انتخاب رنگ</h4><button class="link" id="eyedrop">◎ قطره‌چکان از صفحه</button></div>
+    <div class="cur">
+      <div class="big" id="bigSwatch"><input type="color" id="colorInput"></div>
+      <div class="fmts">
+        <button class="fmt" data-f="hex"><span></span><i>HEX</i></button>
+        <button class="fmt" data-f="rgb"><span></span><i>RGB</i></button>
+        <button class="fmt" data-f="hsl"><span></span><i>HSL</i></button>
+      </div>
+    </div>
+    <div class="head"><h4>پالت رنگی</h4></div>
+    <div class="swatches" id="palette"></div>
+    <div class="head"><h4>رنگ‌های اخیر</h4></div>
+    <div class="swatches" id="recentColors"></div>
+  </div>
+
+  <div class="panel" data-name="note">
+    <div class="head"><button class="back">←</button><h4>یادداشت‌ها</h4><span class="link" id="noteInfo">ذخیره شد</span></div>
+    <input class="field" id="noteSearch" placeholder="جستجو در یادداشت‌ها…">
+    <div class="chips" id="noteTabs"></div>
+    <textarea class="field scroll" id="note" placeholder="یادداشت خود را بنویسید…"></textarea>
+    <div class="row"><button class="btn" id="noteNew">＋ جدید</button><button class="btn" id="noteCopy">کپی</button><button class="btn" id="noteDel">حذف</button></div>
+  </div>
+
+  <div class="panel" data-name="more">
+    <div class="head"><h4>جعبه ابزار</h4><span class="hint">ابزار را به داک بکشید</span></div>
+    <div class="grid3 tiles" id="tiles"></div>
+  </div>
+
+  <div class="panel" data-name="calc">
+    <div class="head"><button class="back">←</button><h4>ماشین حساب</h4></div>
+    <input class="field" id="calcIn" placeholder="مثال: (12.5 * 4) / 3 + 2^3" dir="ltr" style="text-align:left">
+    <div class="display" id="calcOut" title="کلیک برای کپی">0</div>
+  </div>
+
+  <div class="panel" data-name="timer">
+    <div class="head"><button class="back">←</button><h4>تایمر</h4></div>
+    <div class="timer" id="timerOut">05:00</div>
+    <div class="row" id="timerPresets"></div>
+    <div class="row"><button class="btn primary" id="timerStart">شروع</button><button class="btn" id="timerReset">بازنشانی</button></div>
+  </div>
+
+  <div class="panel" data-name="stopwatch">
+    <div class="head"><button class="back">←</button><h4>کرنومتر</h4></div>
+    <div class="timer" id="swOut">00:00.00</div>
+    <div class="row"><button class="btn primary" id="swStart">شروع</button><button class="btn" id="swLap">دور</button></div>
+    <div class="list scroll" id="swLaps" style="max-height:150px"></div>
+  </div>
+
+  <div class="panel" data-name="text">
+    <div class="head"><button class="back">←</button><h4>ابزارهای متنی</h4></div>
+    <div class="grid3" id="textTools"></div>
+  </div>
+
+  <div class="panel" data-name="pass">
+    <div class="head"><button class="back">←</button><h4>تولید رمز عبور</h4></div>
+    <div class="pw" id="pwOut" title="کلیک برای کپی"></div>
+    <div class="set"><span>طول رمز: <b id="pwLenV">16</b></span></div>
+    <input type="range" min="6" max="48" value="16" id="pwLen">
+    <div class="row"><button class="btn" id="pwGen">تولید مجدد</button><button class="btn primary" id="pwCopy">کپی رمز</button></div>
+  </div>
+
+  <div class="panel" data-name="unit">
+    <div class="head"><button class="back">←</button><h4>تبدیل واحد</h4></div>
+    <input class="field" id="unitIn" placeholder="مثال: 5 km, 70 kg, 30 c, 12 in" dir="ltr" style="text-align:left">
+    <div id="unitOut" class="list"></div>
+  </div>
+
+  <div class="panel" data-name="media">
+    <div class="head"><button class="back">←</button><h4>کنترل مدیا و صدا</h4></div>
+    <div class="mrow"><button class="mb spring" data-key="prev"><svg viewBox="0 0 24 24"><path d="M19 5L9 12l10 7zM5 5v14"/></svg></button><button class="mb big spring" data-key="play"><svg viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z"/></svg></button><button class="mb spring" data-key="next"><svg viewBox="0 0 24 24"><path d="M5 5l10 7-10 7zM19 5v14"/></svg></button></div>
+    <div class="mrow"><button class="mb spring" data-key="voldown"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 12h4"/></svg></button><button class="mb spring" data-key="mute"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l4 6M21 9l-4 6"/></svg></button><button class="mb spring" data-key="volup"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 12h4M19 10v4"/></svg></button></div>
+  </div>
+
+  <div class="panel" data-name="gen">
+    <div class="head"><button class="back">←</button><h4>تولید داده سریع</h4></div>
+    <div class="list" id="genList"></div>
+  </div>
+
+  <div class="panel" data-name="folders">
+    <div class="head"><button class="back">←</button><h4>پوشه‌های ویندوز</h4></div>
+    <div class="grid3" id="folderGrid"></div>
+  </div>
+
+  <div class="panel" data-name="snippets">
+    <div class="head"><button class="back">←</button><h4>قطعه‌متن‌ها (Snippets)</h4><span class="hint">کلیک برای درج</span></div>
+    <input class="field" id="snipIn" placeholder="یک عبارت پرکاربرد بنویسید و اینتر بزنید…">
+    <div class="list scroll" id="snipList"></div>
+  </div>
+
+  <div class="panel" data-name="search">
+    <div class="head"><button class="back">←</button><h4>جستجوی وب</h4></div>
+    <input class="field" id="searchIn" placeholder="جستجو یا آدرس سایت… سپس اینتر">
+    <div class="chips" id="engines"></div>
+  </div>
+
+  <div class="panel" data-name="clock">
+    <div class="head"><button class="back">←</button><h4>ساعت جهانی</h4></div>
+    <div class="list scroll" id="zones"></div>
+    <select class="field" id="zoneAdd"></select>
+  </div>
+
+  <div class="panel" data-name="settings">
+    <div class="tabs" id="stabs">
+      <button data-p="voice" class="on">صدا</button>
+      <button data-p="widgets">ابزارها</button>
+      <button data-p="look">پوسته</button>
+      <button data-p="general">عمومی</button>
+    </div>
+
+    <!-- Voice engine settings page -->
+    <div class="spage on" data-p="voice">
+      <div class="wsec"><span>تنظیمات موتور صوتی Zero</span></div>
+      <div class="set"><span>وضعیت اتصال دیمون</span><span class="voice-status-badge" id="daemonIpcBadge">متصل به لوله IPC ✓</span></div>
+      <div class="set">
+        <span>مدل پردازش گفتار</span>
+        <select class="field" id="voiceModelSel" style="width:auto">
+          <option value="tiny">سریع (Tiny - 39MB)</option>
+          <option value="base" selected>استاندارد (Base - 74MB)</option>
+          <option value="small">پیشرفته (Small - 244MB)</option>
+          <option value="cloud">ابری (Zero Cloud STT)</option>
+        </select>
+      </div>
+      <div class="set">
+        <span>کلید میانبر فعال‌سازی</span>
+        <select class="field" id="voiceHotkeySel" style="width:auto">
+          <option value="capslock" selected>کلید Caps Lock</option>
+          <option value="alt_space">Alt + Space</option>
+          <option value="ctrl_shift_z">Ctrl + Shift + Z</option>
+        </select>
+      </div>
+      <div class="set"><span>تزریق مستقیم متن به مکان‌نما</span><button class="toggle on" id="tDirectInject"></button></div>
+      <div class="set"><span>حذف خودکار سکوت (VAD)</span><button class="toggle on" id="tVad"></button></div>
+      <div class="set"><span>پیش‌نمایش کپسولی شناور</span><button class="toggle on" id="tCapsulePreview"></button></div>
+      <button class="btn primary" id="saveVoiceSettingsBtn" style="margin-top:6px">ذخیره تنظیمات صوتی</button>
+    </div>
+
+    <div class="spage" data-p="widgets">
+      <div class="wsec"><span>درون داک کناری</span><span><button class="link" id="addApp">＋ برنامه</button><button class="link" id="addFolder">＋ پوشه</button></span></div>
+      <div class="wlist scroll" id="wDock" data-zone="dock" style="max-height:190px"></div>
+      <div class="wsec"><span>درون منوی بیشتر</span></div>
+      <div class="wlist scroll" id="wMore" data-zone="more" style="max-height:170px"></div>
+    </div>
+
+    <div class="spage" data-p="look">
+      <div class="themes" id="themes"></div>
+    </div>
+
+    <div class="spage" data-p="general">
+      <div class="set"><span id="startLbl">اجرا هنگام بالا آمدن ویندوز</span><button class="toggle" id="tStartup"></button></div>
+      <div class="set" id="pasteRow"><span>الصاق خودکار با کلیک</span><button class="toggle" id="tPaste"></button></div>
+      <div class="set"><span>بزرگ‌نمایی آیکون با لمس نشانگر</span><button class="toggle" id="tMagnify"></button></div>
+      <div class="set"><span>لبه استقرار پنل</span><select class="field" id="edgeSel" style="width:auto"><option value="right">راست</option><option value="left">چپ</option></select></div>
+      <div class="set" id="monRow"><span>مانیتور</span><select class="field" id="monSel" style="width:auto"></select></div>
+      <div class="set" id="ctxRow"><span>افزودن به منوی راست‌کلیک<small class="hint" style="display:block">فایل‌ها و پوشه‌ها → “Add to Right Panel”</small></span><button class="toggle" id="tContext"></button></div>
+      <div class="set"><span>بررسی خودکار به‌روزرسانی</span><button class="toggle" id="tUpdates"></button></div>
+      <div class="item plain" id="aboutRow">نسخه پنل هوشمند Zero <b id="verNow"></b><small id="updLine">کلیک برای بررسی به‌روزرسانی</small></div>
+      <button class="btn primary" id="updBtn" style="display:none">دریافت و نصب به‌روزرسانی</button>
+      <button class="btn" id="quitBtn">خروج از پنل کناری</button>
+    </div>
+  </div>
+</div>
+
+<div class="drop-hint" id="dropHint"><span><b>＋</b>رها کنید تا به پنل اضافه شود</span></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const send = (t, o = {}) => window.ipc.postMessage(JSON.stringify({ t, ...o }));
+const init = window.__init || {};
+const OS = init.platform || 'windows';
+const S = Object.assign({
+  theme: 'midnight', accent: '#38bdf8', startup: false, paste: true, magnify: true, recentEmoji: [], recentColors: [],
+  edge: 'right', monitor: 0, updates: true, lastCheck: 0, hidden: [], apps: [], snippets: [], pins: [], engine: 'Google',
+  voiceModel: 'base', voiceHotkey: 'capslock', directInject: true, vad: true, capsulePreview: true,
+  zones: ['Asia/Tehran', 'UTC', 'Europe/London', 'America/New_York', 'Asia/Dubai']
+}, init.settings || {});
+
+const save = () => send('settings', { settings: S });
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const I = p => `<svg viewBox="0 0 24 24">${p}</svg>`;
+let DIR = 1;   // 1 = right edge, -1 = left edge
+const atEdge = x => DIR > 0 ? x >= innerWidth - 14 : x <= 14;
+
+/* ================= widget registry ================= */
+const W = {
+  voice:     { name: 'تایپ صوتی', icon: I('<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>'), kind: 'panel' },
+  clip:      { name: 'کلیپ‌بورد', icon: I('<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/>'), kind: 'panel' },
+  note:      { name: 'یادداشت‌ها', icon: I('<path d="M5 4h10l4 4v12H5z"/><path d="M9 12h6M9 16h4"/>'), kind: 'panel' },
+  snippets:  { name: 'قطعه‌متن', icon: I('<path d="M8 6l-5 6 5 6M16 6l5 6-5 6M13.5 4l-3 16"/>'), kind: 'panel' },
+  emoji:     { name: 'ایموجی', icon: '😊', kind: 'panel' },
+  color:     { name: 'رنگ', icon: I('<path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-1.2-1-1.5-1-2.5 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4-4-7.5-9-7.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>'), kind: 'panel' },
+  shot:      { name: 'اسکرین‌شات', icon: I('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/>'), kind: 'action', run: () => { app.close(); send('screenshot'); } },
+  more:      { name: 'بیشتر', icon: I('<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>'), kind: 'panel', dockOnly: true },
+  calc:      { name: 'ماشین حساب', icon: I('<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8 7h8M8.5 11h.01M12 11h.01M15.5 11h.01M8.5 14.5h.01M12 14.5h.01M15.5 14.5h.01M8.5 18h.01M12 18h.01M15.5 18h.01"/>'), kind: 'panel' },
+  timer:     { name: 'تایمر', icon: I('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V10M10 2.5h4M18.5 6.5l1.5-1.5"/>'), kind: 'panel' },
+  stopwatch: { name: 'کرنومتر', icon: I('<circle cx="12" cy="14" r="7"/><path d="M12 14l3-3M10 3h4M12 3v4"/>'), kind: 'panel' },
+  text:      { name: 'ابزار متنی', icon: I('<path d="M4 18l4.5-12L13 18M5.7 14h5.6M15.5 13.5a2.5 2.5 0 1 1 5 0V18M20.5 15.5c-1.5-.8-5-.8-5 1.2 0 1.8 3.5 1.8 5 0"/>'), kind: 'panel' },
+  pass:      { name: 'رمز عبور', icon: I('<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16.5 6.5l2.5 2.5M14 9l2 2"/>'), kind: 'panel' },
+  unit:      { name: 'تبدیل واحد', icon: I('<rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6.5 8v3M10 8v4.5M13.5 8v3M17 8v4.5"/>'), kind: 'panel' },
+  media:     { name: 'صدا و مدیا', icon: I('<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'), kind: 'panel' },
+  gen:       { name: 'تولید داده', icon: I('<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'), kind: 'panel' },
+  folders:   { name: 'پوشه‌ها', icon: I('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'), kind: 'panel' },
+  search:    { name: 'جستجو', icon: I('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'), kind: 'panel' },
+  clock:     { name: 'ساعت جهانی', icon: I('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'), kind: 'panel' },
+  awake:     { name: 'بیداری سیستم', icon: I('<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>'), kind: 'action', run: () => toggleAwake() },
+  pinwin:    { os: ['windows'], name: 'سنجاق پنجره', icon: I('<path d="M9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v7"/>'), kind: 'action', run: () => send('pinwin') },
+  desktop:   { os: ['windows'], name: 'میز کار', icon: I('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'), kind: 'action', run: () => { app.close(); send('key', { name: 'desktop' }); } },
+  screenoff: { name: 'خاموشی صفحه', icon: I('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M15 8a3.2 3.2 0 1 1-3-2 2.5 2.5 0 0 0 3 2z"/>'), kind: 'action', run: () => { app.close(); send('screenoff'); } },
+  lock:      { name: 'قفل ویندوز', icon: I('<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3M12 14.5v2"/>'), kind: 'action', run: () => { app.close(); send('lock'); } },
+  taskmgr:   { name: 'تسک منیجر', icon: I('<path d="M3 12h4l3-7 4 14 3-7h4"/>'), kind: 'action', run: () => { app.close(); send('open', { target: 'taskmgr' }); } },
+  settings:  { name: 'تنظیمات', kind: 'panel', fixed: true },
+  winset:    { name: 'تنظیمات ویندوز', icon: I('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'), kind: 'action', run: () => { app.close(); send('open', { target: 'ms-settings:' }); } },
+};
+const DEF_DOCK = ['voice', 'clip', 'note', 'snippets', 'emoji', 'more'];
+const DEF_MORE = ['calc', 'timer', 'color', 'shot', 'stopwatch', 'search', 'text', 'media', 'clock', 'gen', 'pass', 'unit', 'folders', 'awake', 'pinwin', 'desktop', 'screenoff', 'lock', 'taskmgr', 'winset'];
+
+function normalize() {
+  if (!S.dock) S.dock = (S.order && S.order.length ? S.order : [...DEF_DOCK, ...S.apps.map(a => a.id)]);
+  if (!S.more) S.more = [...DEF_MORE];
+  const known = new Set([...Object.keys(W).filter(k => !W[k].fixed && (!W[k].os || W[k].os.includes(OS))), ...S.apps.map(a => a.id)]);
+  S.dock = [...new Set(S.dock)].filter(id => known.has(id));
+  S.more = [...new Set(S.more)].filter(id => known.has(id) && !S.dock.includes(id) && !W[id]?.dockOnly);
+  if (!S.dock.includes('voice')) S.dock.unshift('voice');
+  if (!S.dock.includes('more')) S.dock.push('more');
+  for (const id of known) if (!S.dock.includes(id) && !S.more.includes(id)) S.more.push(id);
+  delete S.order;
+}
+normalize();
+const isApp = id => id.startsWith('app-');
+const info = id => {
+  if (isApp(id)) { const a = S.apps.find(x => x.id === id); return { name: a?.name || 'App', icon: a?.icon ? `<img src="${a.icon}">` : '🚀', kind: 'app', app: a }; }
+  return W[id];
+};
+
+/* ================= themes ================= */
+const THEMES = {
+  midnight: ['نیمه‌شب', '#0d0f14', 'dark', '#38bdf8'], graphite: ['گرافیت', '#1c1c1e', 'dark', '#60a5fa'], ocean: ['اقیانوس', '#0b1f3a', 'dark', '#7cc4ff'],
+  grape: ['انگوری', '#23103f', 'dark', '#c9a7ff'], forest: ['جنگل', '#0c2618', 'dark', '#7be0a6'], wine: ['یاقوتی', '#34101a', 'dark', '#ff9bb3'],
+  espresso: ['اسپرسو', '#2a1c14', 'dark', '#f1c79a'], neon: ['نئون', '#050505', 'dark', '#39ff88'], sunset: ['غروب', '#1d0f24', 'dark', '#ff9d5c'],
+  snow: ['برفی', '#f5f5f7', 'light', '#0284c7'], sand: ['شنزار', '#efe4d2', 'light', '#6b4a2b'], sky: ['آسمان', '#e2efff', 'light', '#1557b0'],
+  rose: ['رز', '#fde6ee', 'light', '#b0194a'], mint: ['نعناع', '#e1f7ec', 'light', '#0e7a4b'], lilac: ['یاسی', '#eee8ff', 'light', '#5b33c9'],
+};
+function themeVars(bg, mode, accent) {
+  const light = mode === 'light';
+  const ink = light ? '#111827' : '#ffffff', a = light ? '0,0,0' : '255,255,255';
+  const inv = accent || ink, invInk = accent ? (light ? '#ffffff' : '#000000') : bg;
+  return { '--liquid': bg, '--ink': ink, '--inv': inv, '--inv-ink': invInk, '--soft': `rgba(${a},.07)`, '--soft2': `rgba(${a},.13)`,
+    '--muted': `rgba(${a},.52)`, '--line': `rgba(${a},.14)` };
+}
+function lum(hex) { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255); return .2126 * r + .7152 * g + .0722 * b; }
+function applyTheme() {
+  const t = S.theme === 'custom' ? ['سفارشی', S.accent, lum(S.accent) > .55 ? 'light' : 'dark'] : (THEMES[S.theme] || THEMES.midnight);
+  const vars = themeVars(t[1], t[2], t[3]);
+  for (const [k, v] of Object.entries(vars)) document.documentElement.style.setProperty(k, v);
+  renderThemes();
+}
+function renderThemes() {
+  $('#themes').innerHTML = Object.entries(THEMES).map(([id, [n, bg, mode, acc]]) => {
+    const v = themeVars(bg, mode, acc);
+    return `<button class="theme ${S.theme === id ? 'on' : ''}" data-t="${id}"><i style="background:${bg};--dot:${v['--inv']}"></i>${n}</button>`;
+  }).join('') + `<button class="theme ${S.theme === 'custom' ? 'on' : ''}"><i style="background:${S.theme === 'custom' ? S.accent : 'conic-gradient(#f43f5e,#f59e0b,#84cc16,#06b6d4,#8b5cf6,#f43f5e)'};--dot:transparent"><input type="color" id="customTheme" value="${S.accent}"></i>سفارشی</button>`;
+  $('#customTheme').addEventListener('input', e => { S.theme = 'custom'; S.accent = e.target.value; const t = themeVars(S.accent, lum(S.accent) > .55 ? 'light' : 'dark');
+    for (const [k, v] of Object.entries(t)) document.documentElement.style.setProperty(k, v); });
+  $('#customTheme').addEventListener('change', () => { save(); renderThemes(); });
+}
+$('#themes').addEventListener('click', e => { const t = e.target.closest('[data-t]')?.dataset.t; if (t) { S.theme = t; save(); applyTheme(); } });
+
+/* ================= liquid spring engine ================= */
+class Spring {
+  constructor(v, k = 420, d = 34) { this.v = v; this.t = v; this.vel = 0; this.k = k; this.d = d; }
+  step(dt) { const n = Math.ceil(dt / .004), h = dt / n;
+    for (let i = 0; i < n; i++) { this.vel += (-this.k * (this.v - this.t) - this.d * this.vel) * h; this.v += this.vel * h; } return this.v; }
+}
+const tabUi = $('#tabUi'), flyUi = $('#flyUi'), toolsBox = $('#tools'), pill = $('#pill');
+const slide = new Spring(0, 320, 38);
+const grow = new Spring(0, 340, 24), fy = new Spring(innerHeight / 2, 380, 30);
+const pillY = new Spring(0, 420, 26), pillS = new Spring(0, 380, 22);
+
+let isOpen = false, panel = null, sub = false, anchorY = innerHeight / 2, mx = -1, outT, openedAt = -1e9, closedAt = -1e9, sticky = false, hoverY = null;
+let isRecording = false;
+
+const app = window.app = {
+  open() { if (isOpen) return; isOpen = true; openedAt = performance.now(); },
+  close() {
+    if (!isOpen) return; isOpen = false; sticky = false; closedAt = performance.now(); setPanel(null); mx = -1; hoverY = null;
+    document.activeElement?.blur(); send('pass', { on: true });
+  },
+  cursor(dist) { mx = dist; },
+  show(name) { sticky = true; app.open(); if (name) setTimeout(() => openWidget(name), 140); },
+  appAdded(it) {
+    const id = 'app-' + Date.now();
+    S.apps.push({ id, name: it.name, path: it.path, icon: it.icon }); S.dock.splice(Math.max(0, S.dock.indexOf('more')), 0, id);
+    save(); renderAll(); toast(`برنامه ${it.name} اضافه شد`);
+  },
+  syncStartup(v) { S.startup = v; $('#tStartup').classList.toggle('on', v); save(); },
+  blur() { if (isOpen && !dragging) app.close(); },
+  clip(text) { addClip(text); },
+  picked(hex) { setColor(hex); pushRecentColor(hex); copy(hex, 'رنگ کپی شد: ' + hex); isOpen = true; openWidget('color'); },
+  toast: m => toast(m),
+
+  // Voice & IPC realtime bridges
+  voiceStatus(status) {
+    const isRec = status.toLowerCase().includes('record') || status.toLowerCase().includes('listening');
+    const isProc = status.toLowerCase().includes('transcrib') || status.toLowerCase().includes('process');
+    isRecording = isRec;
+    $('#voiceTriggerBtn').classList.toggle('recording', isRec);
+    $('#voiceLiveDot').classList.toggle('rec', isRec);
+    const dockVoice = $(`#tabUi .tool[data-w="voice"]`);
+    if (dockVoice) dockVoice.classList.toggle('recording', isRec);
+
+    const badge = $('#voiceStatusBadge');
+    if (isRec) { badge.textContent = 'در حال ضبط صدا...'; badge.className = 'voice-status-badge live'; }
+    else if (isProc) { badge.textContent = 'پردازش متن...'; badge.className = 'voice-status-badge'; }
+    else { badge.textContent = 'آماده'; badge.className = 'voice-status-badge'; }
+  },
+  voicePreview(text) {
+    if (text) {
+      $('#voicePreviewText').textContent = text;
+      $('#voicePreviewText').scrollTop = $('#voicePreviewText').scrollHeight;
+    }
+  },
+  voiceDone(text) {
+    if (text && text.trim()) {
+      $('#voicePreviewText').textContent = text;
+      toast('رونویسی با موفقیت انجام شد ✓');
+      addClip(text);
+    }
+  },
+  daemonConnected(connected) {
+    const badge = $('#daemonIpcBadge');
+    if (badge) {
+      badge.textContent = connected ? 'متصل به لوله دیمون Zero ✓' : 'در حال انتظار برای دیمون...';
+      badge.style.color = connected ? '#34c759' : '#f59e0b';
+    }
+  },
+  setVoiceStatus(data) {
+    if (data && data.status) app.voiceStatus(data.status);
+  },
+  setVoiceConfig(data) {
+    if (data && data.config) {
+      try {
+        const c = typeof data.config === 'string' ? JSON.parse(data.config) : data.config;
+        if (c.active_model) $('#voiceModelSel').value = c.active_model;
+        if (c.hotkey) $('#voiceHotkeySel').value = c.hotkey;
+      } catch (e) {}
+    }
+  },
+  setSyncedNotes(data) {
+    if (data && data.items) {
+      try {
+        const arr = JSON.parse(data.items);
+        if (Array.isArray(arr) && arr.length) {
+          notes = arr.map(n => ({ id: n.id, text: n.body ? `${n.title ? n.title + '\n' : ''}${n.body}` : n.title }));
+          renderNotes();
+        }
+      } catch (e) {}
+    }
+  },
+  setSyncedSnippets(data) {
+    if (data && data.entries) {
+      try {
+        const arr = JSON.parse(data.entries);
+        if (Array.isArray(arr)) {
+          S.snippets = arr.map(s => s.replacement || s.trigger_text);
+          renderSnips();
+        }
+      } catch (e) {}
+    }
+  }
+};
+
+const typing = () => /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !/range|color/.test(document.activeElement.type);
+function inside(x, y) {
+  const r1 = tabUi.getBoundingClientRect();
+  const nearTab = DIR > 0 ? x > r1.left - 16 : x < r1.right + 16;
+  if (nearTab && y > r1.top - 30 && y < r1.bottom + 30) return true;
+  if (panel) {
+    const r2 = flyUi.getBoundingClientRect();
+    const inFly = DIR > 0 ? (x > r2.left - 16 && x < r1.left + 4) : (x < r2.right + 16 && x > r1.right - 4);
+    if (inFly && y > r2.top - 16 && y < r2.bottom + 16) return true;
+  }
+  return false;
+}
+function maybeClose() { if (isOpen && !typing() && !sticky && !dragging) { clearTimeout(outT); outT = setTimeout(app.close, 240); } }
+let lastPt = null;
+addEventListener('dragover', e => { lastPt = { x: e.clientX, y: e.clientY }; });
+addEventListener('mousemove', e => {
+  lastPt = { x: e.clientX, y: e.clientY };
+  if (dragging && e.buttons === 0) dropDrag(e);
+  if (!isOpen) return;
+  const r = tabUi.getBoundingClientRect();
+  hoverY = e.clientX > r.left && e.clientY > r.top && e.clientY < r.bottom ? e.clientY : null;
+  if (inside(e.clientX, e.clientY)) { clearTimeout(outT); sticky = false; } else maybeClose();
+});
+document.documentElement.addEventListener('mouseleave', () => { hoverY = null; maybeClose(); });
+addEventListener('keydown', e => { if (e.key === 'Escape') app.close(); });
+let edgeSent = false;
+addEventListener('mousemove', e => { if (!isOpen && !edgeSent && atEdge(e.clientX)) { edgeSent = true; send('edge'); setTimeout(() => edgeSent = false, 400); } });
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+  const items = $$('#tabUi .tool'), n = items.length;
+  const sinceOpen = (now - openedAt) / 1000, sinceClose = (now - closedAt) / 1000;
+
+  const peek = mx < 0 ? 0 : clamp(1 - mx / 150) ** 2 * .22;
+  slide.t = isOpen ? 1 : (sinceClose < .07 ? 1 : peek);
+  const sl = slide.step(dt), v = slide.vel;
+  const sx = 1 + clamp(Math.abs(v) * .05, 0, .22), sy = 1 - clamp(Math.abs(v) * .03, 0, .12);
+  tabUi.style.transform = `translate(${Math.max(0, 1 - sl) * 120 * DIR}%, -50%) scale(${sx}, ${sy})`;
+  const edgeH = $('#edgeHandle');
+  if (edgeH) {
+    edgeH.style.opacity = isOpen ? '0' : '0.88';
+    edgeH.style.pointerEvents = isOpen ? 'none' : 'auto';
+  }
+  const r = 26 + clamp(Math.abs(v) * 6, 0, 18);
+  tabUi.style.borderRadius = DIR > 0 ? `${r}px 0 0 ${r}px` : `0 ${r}px ${r}px 0`;
+  tabUi.style.setProperty('--f', `${Math.max(0, 26 * clamp(sl) + clamp(Math.abs(v) * 4, 0, 14))}px`);
+
+  let activeEl = null;
+  items.forEach((el, i) => {
+    const sp = el._s || (el._s = new Spring(0, 380, 25));
+    const mg = el._m || (el._m = new Spring(0, 500, 30));
+    const pr = el._p || (el._p = new Spring(0, 700, 28));
+    sp.t = isOpen ? (sinceOpen > .04 + i * .03 ? 1 : 0) : (sinceClose > (n - 1 - i) * .012 ? 0 : sp.t);
+    let m = 0;
+    if (S.magnify && hoverY !== null && !dragging) {
+      const rc = el.getBoundingClientRect(), d = Math.abs(rc.top + rc.height / 2 - hoverY);
+      m = Math.max(0, 1 - d / 80) ** 1.6;
+    }
+    mg.t = m;
+    const p = sp.step(dt), M = mg.step(dt), P = pr.step(dt);
+    el.style.opacity = clamp(p);
+    el.style.transform = `translateX(${((1 - p) * 20 - M * 5) * DIR}px) scale(${(.55 + .45 * p) * (1 + M * .16) * (1 - P * .14)})`;
+    el.style.filter = p < .97 ? `blur(${(1 - clamp(p)) * 6}px)` : '';
+    if (el.classList.contains('active')) activeEl = el;
+  });
+
+  if (activeEl) {
+    const tr = tabUi.getBoundingClientRect(), br = activeEl.getBoundingClientRect();
+    const target = (br.top + br.height / 2 - tr.top) / sy;
+    if (pillS.v < .05) { pillY.v = target; pillY.vel = 0; }
+    pillY.t = target; pillS.t = 1;
+  } else pillS.t = 0;
+  const py = pillY.step(dt), ps = Math.max(0, pillS.step(dt));
+  const stretch = clamp(Math.abs(pillY.vel) / 900, 0, .45);
+  const am = activeEl?._m ? 1 + activeEl._m.v * .16 : 1;
+  pill.style.transform = `translateY(${py}px) scale(${ps * am * (1 - stretch * .35)}, ${ps * am * (1 + stretch)})`;
+
+  grow.t = panel ? 1 : 0;
+  const g = grow.step(dt), gv = grow.vel, gs = Math.max(0, g);
+  const flyH = flyUi.offsetHeight;
+  if (panel) fy.t = clamp(anchorY, flyH / 2 + 10, innerHeight - flyH / 2 - 10);
+  const Y = fy.step(dt);
+  const stX = 1 + clamp(gv * .04, -.15, .15), stY = 1 - clamp(gv * .025, -.1, .1);
+  flyUi.style.visibility = gs > .02 ? 'visible' : 'hidden';
+  flyUi.style.opacity = clamp(gs * 1.6);
+  flyUi.style.transform = `translate(${(1 - gs) * 40 * DIR}px, ${Y - flyH / 2}px) scale(${Math.max(.05, gs * stX)}, ${Math.max(.1, (.25 + .75 * gs) * stY)})`;
+  flyUi.style.borderRadius = `${22 + (1 - clamp(gs)) * 60}px`;
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ================= dock + panels rendering ================= */
+const panels = $$('.panel');
+function toolHTML(id) {
+  const w = info(id); if (!w) return '';
+  const isRec = id === 'voice' && isRecording;
+  return `<button class="tool ${w.kind === 'app' ? 'app' : ''} ${id === 'awake' && awake ? 'on' : ''} ${isRec ? 'recording' : ''}" data-w="${id}" title="${esc(w.name)}">${w.icon}</button>`;
+}
+function tileHTML(id) {
+  const w = info(id); if (!w) return '';
+  return `<button class="tile ${id === 'awake' && awake ? 'on' : ''}" data-w="${id}"><b>${w.icon}</b>${esc(w.name)}</button>`;
+}
+function renderTools() {
+  const keep = new Map($$('#tools .tool').map(el => [el.dataset.w, el]));
+  toolsBox.innerHTML = '';
+  for (const id of S.dock) {
+    if (S.hidden.includes(id)) continue;
+    const tmp = document.createElement('div'); tmp.innerHTML = toolHTML(id);
+    const el = tmp.firstElementChild; if (!el) continue;
+    const old = keep.get(id); if (old) { el._s = old._s; el._m = old._m; el._p = old._p; }
+    toolsBox.appendChild(el);
+  }
+  markActive();
+}
+function renderTiles() {
+  const list = S.more.filter(id => !S.hidden.includes(id));
+  $('#tiles').innerHTML = list.length ? list.map(tileHTML).join('') : '<div class="empty" style="grid-column:1/-1">ابزارهای مورد نظر را از داک به اینجا بکشید</div>';
+}
+function renderAll() { renderTools(); renderTiles(); renderWidgets(); }
+function markActive() {
+  const act = panel && sub ? 'more' : panel;
+  $$('#tabUi .tool').forEach(t => t.classList.toggle('active', !!act && t.dataset.w === act));
+}
+function setPanel(name, fromMore = false) {
+  if (name && !panel) { fy.v = anchorY; fy.vel = 0; grow.v = 0; grow.vel = 0; }
+  else if (name && panel && name !== panel) grow.vel -= 3;
+  panel = name; sub = !!name && fromMore;
+  flyUi.classList.toggle('sub', sub);
+  if (name) panels.forEach(p => p.classList.toggle('on', p.dataset.name === name));
+  markActive();
+  if (name === 'more') renderTiles();
+  if (name === 'voice') send('getVoiceStatus');
+  if (name === 'note') send('syncNotes');
+  if (name === 'snippets') send('getSnippets');
+  if (name === 'emoji') setTimeout(() => $('#emojiSearch').focus({ preventScroll: true }), 60);
+  if (name === 'calc') setTimeout(() => $('#calcIn').focus(), 60);
+  if (name === 'unit') setTimeout(() => $('#unitIn').focus(), 60);
+  if (name === 'search') setTimeout(() => $('#searchIn').focus(), 60);
+  if (name === 'snippets') setTimeout(() => $('#snipIn').focus(), 60);
+  if (name === 'pass') genPw();
+  if (name === 'gen') renderGen();
+  if (name === 'clock') renderZones();
+  if (name === 'settings') { renderWidgets(); send('getVoiceConfig'); }
+}
+const anchorOf = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+const dockEl = id => $(`#tabUi .tool[data-w="${id}"]`);
+
+function openWidget(id) {
+  const w = info(id); if (!w) return;
+  if (w.kind === 'app') { app.close(); send('launch', { path: w.app.path }); return; }
+  if (w.kind === 'action') { w.run(); return; }
+  const inDock = dockEl(id);
+  if (inDock) { anchorY = anchorOf(inDock); setPanel(id); }
+  else { const m = dockEl('more'); anchorY = m ? anchorOf(m) : innerHeight / 2; setPanel(id, true); }
+}
+function press(el) { if (el._p) { el._p.v = 1; el._p.vel = 0; } }
+tabUi.addEventListener('mousedown', e => { const t = e.target.closest('.tool'); if (t) press(t); });
+tabUi.addEventListener('click', e => {
+  const t = e.target.closest('.tool'); if (!t || dragMoved) return;
+  const id = t.dataset.w, w = info(id);
+  if (w.kind === 'app') { setTimeout(() => { app.close(); send('launch', { path: w.app.path }); }, 160); return; }
+  if (w.kind === 'action') { w.run(); return; }
+  anchorY = anchorOf(t);
+  setPanel(panel === id && !sub ? null : id);
+});
+tabUi.addEventListener('mouseover', e => {
+  const t = e.target.closest('.tool'); if (!t || !panel || dragging) return;
+  const id = t.dataset.w;
+  if (info(id)?.kind === 'panel' && (id !== panel || sub) && !(id === 'more' && sub)) { anchorY = anchorOf(t); setPanel(id); }
+});
+$('#tiles').addEventListener('click', e => {
+  const t = e.target.closest('.tile'); if (!t || dragMoved) return;
+  const id = t.dataset.w, w = info(id);
+  if (w.kind === 'panel') { anchorY = fy.v; setPanel(id, true); } else openWidget(id);
+});
+flyUi.addEventListener('click', e => { if (e.target.closest('.back')) { anchorY = fy.v; setPanel('more'); } });
+
+/* ================= drag & drop: dock ⇄ More ⇄ settings ================= */
+const ph = { dock: Object.assign(document.createElement('div'), { className: 'ph-dock' }), tiles: Object.assign(document.createElement('div'), { className: 'ph-tile' }),
+  row: Object.assign(document.createElement('div'), { className: 'ph-row' }) };
+function zoneOf(el) {
+  if (!el) return null;
+  if (el.closest('#tools')) return { list: 'dock', box: toolsBox, ph: ph.dock, sel: '.tool', axis: 'y' };
+  if (el.closest('#tiles')) return { list: 'more', box: $('#tiles'), ph: ph.tiles, sel: '.tile', axis: 'grid' };
+  const wl = el.closest('.wlist'); if (wl) return { list: wl.dataset.zone, box: wl, ph: ph.row, sel: '.wrow', axis: 'y' };
+  return null;
+}
+function clearPh() { Object.values(ph).forEach(p => p.remove()); $$('.wlist.drop').forEach(x => x.classList.remove('drop')); }
+
+let dragging = null, dragMoved = false;
+function beginDrag(el, e) {
+  const id = el.dataset.w; if (!id || id === 'settings') return;
+  dragging = { id, el, x0: e.clientX, y0: e.clientY, ghost: null };
+  dragMoved = false;
+  addEventListener('mousemove', dragMove);
+  addEventListener('mouseup', dropDrag, { once: true });
+}
+function dragMove(e) {
+  if (!dragging) return;
+  if (!dragMoved) {
+    if (Math.hypot(e.clientX - dragging.x0, e.clientY - dragging.y0) < 5) return;
+    dragMoved = true;
+    clearTimeout(outT);
+    const g = dragging.el.cloneNode(true); g.className += ' drag-ghost'; g.style.opacity = '.9';
+    document.body.appendChild(g); dragging.ghost = g; dragging.el.classList.add('ghost');
+  }
+  dragging.ghost.style.left = e.clientX + 'px'; dragging.ghost.style.top = e.clientY + 'px';
+  dragging.ghost.style.display = 'none';
+  const z = zoneOf(document.elementFromPoint(e.clientX, e.clientY));
+  dragging.ghost.style.display = '';
+  if (!z || (z.list === 'more' && info(dragging.id)?.dockOnly)) return;
+  const kids = [...z.box.querySelectorAll(z.sel)].filter(k => k !== dragging.el);
+  let before = null;
+  for (const k of kids) {
+    const r = k.getBoundingClientRect();
+    const hit = z.axis === 'grid'
+      ? (e.clientY < r.bottom && e.clientX < r.left + r.width / 2) || e.clientY < r.top
+      : e.clientY < r.top + r.height / 2;
+    if (hit) { before = k; break; }
+  }
+  if (z.ph.parentElement !== z.box || z.ph.nextElementSibling !== before) z.box.insertBefore(z.ph, before);
+  if (z.box.classList.contains('wlist')) { $$('.wlist.drop').forEach(x => x.classList.remove('drop')); z.box.classList.add('drop'); }
+}
+function dropDrag(e) {
+  removeEventListener('mousemove', dragMove);
+  if (!dragging) return;
+  const { id, el, ghost } = dragging;
+  const z = [ph.dock, ph.tiles, ph.row].map(x => x.parentElement && zoneOf(x)).find(Boolean);
+  ghost?.remove(); el.classList.remove('ghost'); dragging = null;
+  if (dragMoved && z && z.ph.parentElement === z.box) {
+    const idx = [...z.box.children].filter(k => k === z.ph || (k.matches(z.sel) && k !== el)).indexOf(z.ph);
+    clearPh();
+    moveWidget(id, z.list, idx, z.box.classList.contains('wlist'));
+  } else clearPh();
+  setTimeout(() => { dragMoved = false; if (lastPt && !inside(lastPt.x, lastPt.y)) maybeClose(); }, 60);
+}
+addEventListener('mousedown', e => { const el = e.target.closest('[data-w]'); if (el && e.button === 0) beginDrag(el, e); });
+app.dropHint = on => $('#dropHint').classList.toggle('on', !!on);
+
+function moveWidget(id, list, idx, withHidden = false) {
+  if (list === 'more' && info(id)?.dockOnly) return;
+  const wasHidden = S.hidden.includes(id);
+  const visible = S[list].filter(x => x !== id && (withHidden || !S.hidden.includes(x)));
+  const anchor = visible[idx];
+  S.dock = S.dock.filter(x => x !== id); S.more = S.more.filter(x => x !== id);
+  const at = anchor ? S[list].indexOf(anchor) : S[list].length;
+  S[list].splice(at < 0 ? S[list].length : at, 0, id);
+  if (wasHidden && !withHidden) S.hidden = S.hidden.filter(x => x !== id);
+  save(); renderAll();
+  if (list === 'dock' && panel === 'more') toast(`${info(id).name} → داک`);
+}
+
+/* ================= settings: widget manager ================= */
+function rowHTML(id, zone) {
+  const w = info(id), off = S.hidden.includes(id);
+  const moveBtn = w.dockOnly ? '' : `<button class="wb" data-to="${zone === 'dock' ? 'more' : 'dock'}" title="${zone === 'dock' ? 'انتقال به بیشتر' : 'انتقال به داک'}">${zone === 'dock' ? '↘ بیشتر' : '↗ داک'}</button>`;
+  return `<div class="wrow ${off ? 'off' : ''}" data-w="${id}">
+    <span class="grip">⋮⋮</span><span class="wi">${w.icon}</span><span class="wn">${esc(w.name)}</span>${moveBtn}
+    <button class="wb" data-eye title="${off ? 'نمایش' : 'مخفی'}">${off ? '○' : '●'}</button>
+    ${w.kind === 'app' ? '<button class="wb" data-rm title="حذف برنامه">✕</button>' : ''}</div>`;
+}
+function renderWidgets() {
+  $('#wDock').innerHTML = S.dock.map(id => rowHTML(id, 'dock')).join('');
+  $('#wMore').innerHTML = S.more.map(id => rowHTML(id, 'more')).join('') || '<div class="empty">ابزارها را اینجا رها کنید</div>';
+}
+$('.spage[data-p=widgets]').addEventListener('click', e => {
+  const b = e.target.closest('.wb'), row = e.target.closest('.wrow'); if (!b || !row || dragMoved) return;
+  const id = row.dataset.w;
+  if (b.dataset.to) moveWidget(id, b.dataset.to, b.dataset.to === 'dock' ? S.dock.filter(x => x !== id && x !== 'more').length : 0, true);
+  else if ('eye' in b.dataset) { S.hidden = S.hidden.includes(id) ? S.hidden.filter(x => x !== id) : [...S.hidden, id]; save(); renderAll(); }
+  else if ('rm' in b.dataset) { S.apps = S.apps.filter(x => x.id !== id); S.dock = S.dock.filter(x => x !== id); S.more = S.more.filter(x => x !== id); save(); renderAll(); }
+});
+$('#stabs').addEventListener('click', e => {
+  const p = e.target.dataset.p; if (!p) return;
+  $$('#stabs button').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  $$('.spage').forEach(x => x.classList.toggle('on', x.dataset.p === p));
+});
+$('#addApp').onclick = () => send('addApp');
+$('#addFolder').onclick = () => send('addApp', { folder: true });
+
+const toastEl = $('#toast'); let tt;
+function toast(msg) { toastEl.textContent = msg; toastEl.classList.remove('show'); void toastEl.offsetWidth; toastEl.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => toastEl.classList.remove('show'), 1800); }
+function copy(text, msg) { send('copy', { text }); toast(msg || 'کپی شد ✓'); }
+function deliver(text) { if (S.paste) { app.close(); send('paste', { text }); } else copy(text); }
+
+/* ================= Voice Widget Interactions ================= */
+$('#voiceTriggerBtn').onclick = () => {
+  send('triggerVoice');
+};
+$('#voiceCopyBtn').onclick = () => {
+  const t = $('#voicePreviewText').textContent;
+  if (t && t !== 'متن در حال صحبت در این کادر ظاهر می‌شود...') copy(t, 'متن صوتی کپی شد ✓');
+};
+$('#voiceDeliverBtn').onclick = () => {
+  const t = $('#voicePreviewText').textContent;
+  if (t && t !== 'متن در حال صحبت در این کادر ظاهر می‌شود...') deliver(t);
+};
+$('#voiceClearBtn').onclick = () => {
+  $('#voicePreviewText').textContent = 'متن در حال صحبت در این کادر ظاهر می‌شود...';
+};
+$('#voiceGoSettings').onclick = () => {
+  openWidget('settings');
+  setTimeout(() => {
+    $$('#stabs button').forEach(b => b.classList.toggle('on', b.dataset.p === 'voice'));
+    $$('.spage').forEach(x => x.classList.toggle('on', x.dataset.p === 'voice'));
+  }, 100);
+};
+
+$('#saveVoiceSettingsBtn').onclick = () => {
+  S.voiceModel = $('#voiceModelSel').value;
+  S.voiceHotkey = $('#voiceHotkeySel').value;
+  save();
+  send('saveVoiceSettings', { settings: JSON.stringify({
+    active_model: S.voiceModel,
+    hotkey: S.voiceHotkey,
+    direct_inject: S.directInject,
+    vad: S.vad,
+    capsule_preview: S.capsulePreview
+  })});
+  toast('تنظیمات صوتی با موفقیت ذخیره شد ✓');
+};
+
+/* ================= Emoji ================= */
+const EMOJI = {
+  '😀': '😀 لبخند خندان|😃 خوشحال|😄 شاد|😁 خنده با دندان|😆 قهقهه|😅 خنده عرق|🤣 ریسه رفتن|😂 اشک شوق|🙂 لبخند آرام|😉 چشمک|😊 لپ گلی|😇 فرشته|🥰 عاشقانه|😍 چشم قلبی|🤩 شگفت‌زده|😘 بوسه|😋 خوشمزه|😎 عینک دودی|🥳 جشن تولد|🤔 متفکر|🤐 دهان‌بسته|😐 بی‌تفاوت|😏 نیشخند|😔 غمگین|😴 خوابیده|😷 ماسک|🤮 تهوع|🤯 انفجار مغز|🤠 کلاه کابوی|🤓 درس‌خوان|🥺 ملتمس|😭 گریه زاری|😱 جیغ وحشت|😡 عصبانی قرمز|😠 خشمگین|💀 جمجمه مرگ|💩 پوپ|👻 روح|👽 فضایی|🤖 ربات',
+  '👍': '👍 لایک عالی پسند|👎 دیس‌لایک بد|👌 عالی اوکی|✌️ پیروزی صلح|🤞 آرزوی موفقیت|🤝 دست دادن توافق|🙏 دعا تشکر خواهش|💪 بازو قوی قدرت|👏 تشویق کف‌زدن|🙌 هورا دست‌ها بالا|👐 دست‌های باز|🤲 قنوت دعا|✍️ نوشتن قلم|👀 چشم‌ها نگاه|🧠 مغز هوش|👂 گوش شنیدن|👃 بینی بو|👄 دهان لب|🫶 قلب با دست|🤌 حرکت دست ایتالیایی|🫡 سلام نظامی|👋 بای بای سلام',
+  '❤️': '❤️ قلب قرمز عشق|🧡 قلب نارنجی|💛 قلب زرد|💚 قلب سبز|💙 قلب آبی|💜 قلب بنفش|🖤 قلب سیاه|🤍 قلب سفید|🤎 قلب قهوه‌ای|💔 قلب شکسته|❣️ قلب تعجب|💕 دو قلب|💞 قلب‌های چرخان|💓 قلب تپنده|💗 قلب در حال رشد|💖 قلب درخشان|💘 تیر عشق|💝 قلب کادو|💯 صد امتیاز عالی|💢 عصبانیت|💥 انفجار بمب|💫 ستاره چرخان|✨ جرقه درخشش|🔥 آتش داغ ترند|⭐ ستاره طلایی|🌟 ستاره درخشان|⚡ رعد و برق صاعقه|🎉 شادی جشن تبریک|🎊 کاغذ رنگی',
+  '🐶': '🐶 سگ باوفا|🐱 گربه ملوس|🐭 موش کوچک|🐹 همستر|🐰 خرگوش|🦊 روباه مکار|🐻 خرس قهوه‌ای|🐼 پاندا بامبو|🐨 کوآلا|🐯 ببر وحشی|🦁 شیر جنگل|🐮 گاو شیرده|🐷 خوک نمادین|🐸 قورباغه|🐵 میمون بازیگوش|🐔 مرغ خانگی|🐧 پنگوئن قطبی|🐦 پرنده آوازخوان|🦄 تک‌شاخ رویایی|🐝 زنبور عسل|🦋 پروانه رنگین|🐢 لاک‌پشت صبور|🐬 دلفین باهوش|🌵 کاکتوس|🌲 کاج سبز|🌴 نخل خرما|🍀 شبدر شانس|🌸 شکوفه بهار|🌹 گل رز سرخ|🌻 آفتابگردان|🌈 رنگین‌کمان زیبا|☀️ خورشید تابان|🌙 ماه هلال|☁️ ابر آسمان|❄️ دانه برف زمستان|🌊 موج دریا',
+  '🍕': '🍎 سیب سرخ|🍌 موز شیرین|🍉 هندوانه یلدا|🍇 انگور یاقوتی|🍓 توت فرنگی|🍒 گیلاس تازه|🥑 آووکادو|🍞 نان سنگک بربری|🍔 همبرگر مخصوص|🍟 سیب‌زمینی سرخ کرده|🍕 پیتزا داغ|🥪 ساندویچ لقمه|☕ چای قهوه داغ|🍵 دمنوش سبز|🍺 نوشیدنی خنک|🎂 کیک تولد|🍫 شکلات تخته‌ای|🍿 پاپ‌کورن ذرت',
+  '💡': '⚽ توپ فوتبال|🎮 دسته بازی گیم|🎯 هدف دارت|🏆 جام قهرمانی|🥇 مدال طلا|🎸 گیتار موسیقی|🎹 پیانو ملودی|🎧 هدفون صوتی|📱 گوشی موبایل|💻 لپ‌تاپ کامپیوتر|⌨️ کیبورد صفحه کلید|🖱️ ماوس نشانگر|💡 ایده خلاقیت چراغ|📚 کتاب مطالعه|📝 یادداشت متن قلم|📌 پین سنجاق|📎 گیره کاغذ|🔒 قفل امنیت رمز|🔑 کلید در|🛠️ جعبه ابزار آچار|⚙️ چرخ‌دنده تنظیمات|💰 کیسه پول اسکناس|💳 کارت بانکی خرید|📦 بسته پستی جعبه|✉️ پاکت نامه ایمیل|📅 تقویم روزانه|⏰ ساعت زنگ‌دار|🚀 پرتاب موشک استارتاپ|🚗 ماشین خودرو سواری|🏠 خانه مسکن منبت|🎁 هدیه کادو عیدی',
+  '✅': '✅ تیک سبز تایید انجام|☑️ چک‌باکس فعال|✔️ علامت تایید|❌ ضربدر قرمز رد|➕ مثبت جمع|➖ منفی منها|❓ علامت سوال پرسش|❗ علامت تعجب مهم|⚠️ هشدار توجه اخطار|🚫 ممنوع ورود غیرمجاز|🔴 دایره قرمز|🟢 دایره سبز|🔵 دایره آبی|▶️ پخش پلی|⏸️ توقف مکث|⏹️ استاپ قطع|🔁 تکرار لوپ|⬆️ جهت بالا|⬇️ جهت پایین|⬅️ جهت چپ|➡️ جهت راست|🔗 لینک پیوند زنجیر'
+};
+const ALL = [];
+for (const [cat, s] of Object.entries(EMOJI)) for (const it of s.split('|')) { const i = it.indexOf(' '); ALL.push({ e: it.slice(0, i), n: it.slice(i + 1), cat }); }
+let emojiCat = '😀';
+const grid = $('#emojiGrid');
+$('#cats').innerHTML = ['🕘', ...Object.keys(EMOJI)].map(c => `<button data-c="${c}">${c}</button>`).join('');
+function renderEmoji() {
+  const q = $('#emojiSearch').value.trim().toLowerCase();
+  $$('#cats button').forEach(b => b.classList.toggle('on', !q && b.dataset.c === emojiCat));
+  let list;
+  if (q) list = ALL.filter(x => x.n.includes(q)).map(x => x.e);
+  else if (emojiCat === '🕘') list = S.recentEmoji;
+  else list = ALL.filter(x => x.cat === emojiCat).map(x => x.e);
+  grid.innerHTML = list.length ? list.map(e => `<button class="spring">${e}</button>`).join('') : `<div class="empty" style="grid-column:1/-1">${q ? 'ایموجی یافت نشد' : 'هنوز موردی نیست'}</div>`;
+  grid.scrollTop = 0;
+}
+$('#cats').addEventListener('click', e => { const c = e.target.closest('button')?.dataset.c; if (c) { emojiCat = c; $('#emojiSearch').value = ''; renderEmoji(); } });
+$('#emojiSearch').addEventListener('input', renderEmoji);
+$('#emojiSearch').addEventListener('keydown', e => { if (e.key === 'Enter') grid.querySelector('button')?.click(); });
+grid.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const em = b.textContent;
+  S.recentEmoji = [em, ...S.recentEmoji.filter(x => x !== em)].slice(0, 28); save();
+  deliver(em);
+});
+if (S.recentEmoji.length) emojiCat = '🕘';
+renderEmoji();
+
+/* ================= Clipboard ================= */
+let clips = [];
+function ago(t) {
+  const s = (Date.now() - t) / 1000;
+  if (s < 60) return 'همین الان';
+  if (s < 3600) return `${Math.floor(s / 60)} دقیقه پیش`;
+  if (s < 86400) return `${Math.floor(s / 3600)} ساعت پیش`;
+  return `${Math.floor(s / 86400)} روز پیش`;
+}
+function addClip(text) {
+  if (!text || !text.trim()) return;
+  clips = [{ text, t: Date.now() }, ...clips.filter(c => c.text !== text)].slice(0, 50);
+  renderClips();
+}
+app.clipImage = img => {
+  const row = { img, t: Date.now(), pin: !!img.pinned };
+  clips = [row, ...clips.filter(c => c.img?.id !== img.id)].slice(0, 50);
+  renderClips();
+};
+function renderClips() {
+  const q = $('#clipSearch').value.toLowerCase();
+  const pinned = [...clips.filter(c => c.img && c.pin), ...S.pins.map(text => ({ text, pin: true }))];
+  const rest = clips.filter(c => c.img ? !c.pin : !S.pins.includes(c.text));
+  const list = [...pinned, ...rest].filter(c => c.img ? !q : c.text.toLowerCase().includes(q));
+  window._clipView = list;
+  $('#clipList').innerHTML = list.length ? list.map((c, i) => c.img
+    ? `<button class="item shot spring ${c.pin ? 'pinned' : ''}" data-i="${i}"><img src="${c.img.thumb}" alt=""><small>تصویر · ${c.img.w}×${c.img.h} · ${c.pin ? 'سنجاق شده' : ago(c.t)}</small><span class="acts"><span data-pin title="${c.pin ? 'حذف سنجاق' : 'سنجاق'}">${c.pin ? '★' : '☆'}</span><span data-x title="حذف">×</span></span></button>`
+    : `<button class="item spring ${c.pin ? 'pinned' : ''}" data-i="${i}">${esc(c.text.replace(/\s+/g, ' ').slice(0, 120))}<small>${c.pin ? 'سنجاق شده' : ago(c.t)} · ${c.text.length} نویسه</small><span class="acts"><span data-pin title="${c.pin ? 'حذف سنجاق' : 'سنجاق'}">${c.pin ? '★' : '☆'}</span><span data-x title="حذف">×</span></span></button>`
+  ).join('') : '<div class="empty">هر متنی کپی کنید یا بگویید اینجا ظاهر می‌شود</div>';
+}
+$('#clipList').addEventListener('click', e => {
+  const b = e.target.closest('.item'); if (!b) return;
+  const c = window._clipView[+b.dataset.i];
+  if (c.img) {
+    if (e.target.closest('[data-pin]')) { c.pin = !c.pin; send('pinImage', { id: c.img.id, on: c.pin }); renderClips(); return; }
+    if (e.target.closest('[data-x]')) { if (c.pin) send('pinImage', { id: c.img.id, on: false }); clips = clips.filter(x => x.img?.id !== c.img.id); renderClips(); return; }
+    send('clipImage', { id: c.img.id }); app.close(); return;
+  }
+  if (e.target.closest('[data-pin]')) { S.pins = c.pin ? S.pins.filter(x => x !== c.text) : [c.text, ...S.pins].slice(0, 30); save(); renderClips(); return; }
+  if (e.target.closest('[data-x]')) { if (c.pin) { S.pins = S.pins.filter(x => x !== c.text); save(); } clips = clips.filter(x => x.text !== c.text); renderClips(); return; }
+  deliver(c.text);
+});
+$('#clipSearch').addEventListener('input', renderClips);
+$('#clipClear').onclick = () => { clips = []; renderClips(); toast('تاریخچه پاک‌سازی شد'); };
+renderClips();
+
+/* ================= Color Picker ================= */
+let color = '#38bdf8';
+const hexToRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+function rgbToHsl([r, g, b]) { r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b); let h = 0, s = 0; const l = (mx + mn) / 2;
+  if (mx !== mn) { const d = mx - mn; s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn); h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; }
+  return [Math.round(h), Math.round(s * 100), Math.round(l * 100)]; }
+const fmts = () => { const rgb = hexToRgb(color), hsl = rgbToHsl(rgb);
+  return { hex: color.toUpperCase(), rgb: `rgb(${rgb.join(', ')})`, hsl: `hsl(${hsl[0]}, ${hsl[1]}%, ${hsl[2]}%)` }; };
+function setColor(hex) {
+  color = hex.toLowerCase(); $('#bigSwatch').style.background = color; $('#colorInput').value = color;
+  const f = fmts(); $$('.fmt').forEach(b => b.querySelector('span').textContent = f[b.dataset.f]);
+}
+function pushRecentColor(hex) { S.recentColors = [hex, ...S.recentColors.filter(c => c !== hex)].slice(0, 16); save(); renderRecent(); }
+const PALETTE = ['#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#22c55e','#10b981','#14b8a6','#06b6d4','#0ea5e9','#38bdf8','#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899','#f43f5e','#78716c','#64748b','#111827','#374151','#9ca3af','#e5e7eb','#ffffff'];
+$('#palette').innerHTML = PALETTE.map(c => `<button class="spring" style="background:${c}" data-c="${c}"></button>`).join('');
+function renderRecent() { $('#recentColors').innerHTML = S.recentColors.length ? S.recentColors.map(c => `<button class="spring" style="background:${c}" data-c="${c}"></button>`).join('') : '<div class="empty" style="grid-column:1/-1;padding:6px">رنگ‌های انتخابی اینجا ذخیره می‌شوند</div>'; }
+[$('#palette'), $('#recentColors')].forEach(el => el.addEventListener('click', e => { const c = e.target.dataset.c; if (c) { setColor(c); copy(c.toUpperCase()); } }));
+$$('.fmt').forEach(b => b.onclick = () => { copy(fmts()[b.dataset.f]); pushRecentColor(color); });
+$('#colorInput').addEventListener('input', e => setColor(e.target.value));
+$('#colorInput').addEventListener('change', e => pushRecentColor(e.target.value));
+$('#eyedrop').onclick = () => { app.close(); send('pickColor'); };
+setColor(color); renderRecent();
+
+/* ================= Notes (Synchronized with SQLite) ================= */
+const note = $('#note');
+let notes = Array.isArray(init.notes) ? init.notes : [];
+if (!notes.length) notes = [{ id: 'n' + Date.now(), text: '' }];
+let noteAt = 0, nt;
+const noteTitle = n => (n.text.trim().split('\n')[0] || 'یادداشت خالی').slice(0, 18);
+
+function renderNotes() {
+  const q = $('#noteSearch').value.trim().toLowerCase();
+  const filtered = notes.map((n, i) => ({ ...n, origIdx: i })).filter(n => !q || n.text.toLowerCase().includes(q));
+  noteAt = Math.min(noteAt, Math.max(0, notes.length - 1));
+  $('#noteTabs').innerHTML = filtered.map(n => `<button class="chip spring ${n.origIdx === noteAt ? 'on' : ''}" data-n="${n.origIdx}">${esc(noteTitle(n))}</button>`).join('');
+  if (notes[noteAt]) note.value = notes[noteAt].text;
+  $('#noteInfo').textContent = `${notes.length} یادداشت`;
+}
+function saveNotes(label) {
+  send('note', { notes });
+  if (notes[noteAt]) {
+    const lines = notes[noteAt].text.split('\n');
+    const title = lines[0] || 'یادداشت';
+    const body = lines.slice(1).join('\n');
+    send('saveSyncedNote', { title, body, tags: '[]' });
+  }
+  $('#noteInfo').textContent = label || 'ذخیره شد';
+}
+$('#noteTabs').onclick = e => { const i = e.target.closest('[data-n]')?.dataset.n; if (i !== undefined) { noteAt = +i; renderNotes(); note.focus(); } };
+$('#noteSearch').addEventListener('input', renderNotes);
+note.addEventListener('input', () => {
+  if (notes[noteAt]) notes[noteAt].text = note.value;
+  $('#noteInfo').textContent = 'در حال ذخیره…';
+  clearTimeout(nt); nt = setTimeout(() => { saveNotes(`ذخیره شد · ${note.value.length} نویسه`); renderNotes(); }, 400);
+});
+$('#noteNew').onclick = () => { notes.unshift({ id: 'n' + Date.now(), text: '' }); noteAt = 0; renderNotes(); saveNotes('یادداشت جدید'); note.focus(); };
+$('#noteCopy').onclick = () => copy(note.value, 'متن یادداشت کپی شد ✓');
+$('#noteDel').onclick = () => {
+  if (notes[noteAt] && notes[noteAt].id) send('deleteSyncedNote', { id: notes[noteAt].id });
+  notes.splice(noteAt, 1);
+  if (!notes.length) notes = [{ id: 'n' + Date.now(), text: '' }];
+  noteAt = 0; renderNotes(); saveNotes('یادداشت حذف شد');
+};
+renderNotes();
+
+/* ================= Media & Awake ================= */
+$('[data-name=media]').addEventListener('click', e => { const k = e.target.closest('[data-key]'); if (k) send('key', { name: k.dataset.key }); });
+let awake = false;
+function toggleAwake() {
+  awake = !awake; send('awake', { on: awake }); toast(awake ? '☀ سیستم بیدار می‌ماند' : 'حالت خواب مجاز شد');
+  $$('[data-w=awake]').forEach(el => el.classList.toggle('on', awake));
+}
+
+/* ================= Stopwatch ================= */
+let swStart = 0, swAcc = 0, swRaf = null, laps = [];
+const fmtSw = ms => `${String(ms / 60000 | 0).padStart(2, '0')}:${String((ms / 1000 | 0) % 60).padStart(2, '0')}.${String((ms / 10 | 0) % 100).padStart(2, '0')}`;
+const swNow = () => swAcc + (swRaf ? performance.now() - swStart : 0);
+function swTick() { $('#swOut').textContent = fmtSw(swNow()); swRaf = requestAnimationFrame(swTick); }
+function swDraw() {
+  $('#swStart').textContent = swRaf ? 'توقف' : 'شروع'; $('#swLap').textContent = swRaf ? 'ثبت دور' : 'بازنشانی';
+  $('#swLaps').innerHTML = laps.map((t, i) => `<button class="item plain" data-s="${fmtSw(t)}">دور ${laps.length - i}<small>${fmtSw(t)}</small></button>`).join('');
+}
+$('#swStart').onclick = () => {
+  if (swRaf) { swAcc = swNow(); cancelAnimationFrame(swRaf); swRaf = null; $('#swOut').textContent = fmtSw(swAcc); }
+  else { swStart = performance.now(); swTick(); }
+  swDraw();
+};
+$('#swLap').onclick = () => { if (swRaf) laps.unshift(swNow()); else { swAcc = 0; laps = []; $('#swOut').textContent = fmtSw(0); } swDraw(); };
+$('#swLaps').onclick = e => { const s = e.target.closest('[data-s]')?.dataset.s; if (s) copy(s); };
+
+/* ================= Generators ================= */
+const pad = n => String(n).padStart(2, '0');
+const GEN = {
+  'شناسه یکتا UUID': () => crypto.randomUUID(),
+  'تاریخ امروز': () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; },
+  'زمان فعلی': () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; },
+  'برچسب زمان ISO': () => new Date().toISOString(),
+  'زمان یونیکس': () => String(Math.floor(Date.now() / 1000)),
+  'عدد تصادفی ۱ تا ۱۰۰': () => String(1 + crypto.getRandomValues(new Uint32Array(1))[0] % 100),
+  'شیر یا خط': () => crypto.getRandomValues(new Uint8Array(1))[0] & 1 ? 'شیر (Heads)' : 'خط (Tails)',
+  'متن آزمایشی لورم': () => 'لورم ایپسوم متن ساختگی با تولید سادگی نامفهوم از صنعت چاپ و با استفاده از طراحان گرافیک است.',
+};
+function renderGen() { $('#genList').innerHTML = Object.entries(GEN).map(([n, f]) => `<button class="item plain spring gen" data-g="${n}">${n}<span>${esc(f())}</span></button>`).join(''); }
+$('#genList').onclick = e => { const g = e.target.closest('[data-g]')?.dataset.g; if (g) deliver(GEN[g]()); };
+
+/* ================= Windows Folders ================= */
+const H = init.home || '~';
+const FOLDERS = OS === 'windows'
+  ? [['میز کار (Desktop)', 'shell:Desktop'], ['دانلودها (Downloads)', 'shell:Downloads'], ['اسناد (Documents)', 'shell:Personal'], ['تصاویر (Pictures)', 'shell:My Pictures'],
+     ['موسیقی (Music)', 'shell:My Music'], ['ویدیوها (Videos)', 'shell:My Video'], ['این رایانه (This PC)', 'shell:MyComputerFolder'], ['سطل زباله (Recycle Bin)', 'shell:RecycleBinFolder'], ['استارت‌آپ (Startup)', 'shell:Startup']]
+  : [['خانه', H], ['میز کار', H + '/Desktop'], ['دانلودها', H + '/Downloads'], ['اسناد', H + '/Documents']];
+$('#folderGrid').innerHTML = FOLDERS.map(([n, t]) => `<button class="spring" data-open="${t}"><b>${W.folders.icon}</b>${n}</button>`).join('');
+$('#folderGrid').onclick = e => { const o = e.target.closest('[data-open]'); if (o) { app.close(); send('open', { target: o.dataset.open }); } };
+
+/* ================= Snippets (Synchronized) ================= */
+function renderSnips() {
+  $('#snipList').innerHTML = S.snippets.length ? S.snippets.map((t, i) =>
+    `<button class="item spring" data-i="${i}">${esc(t.replace(/\s+/g, ' ').slice(0, 100))}<span class="acts"><span data-x title="حذف">×</span></span></button>`).join('')
+    : '<div class="empty">متن‌های پرکاربرد (آدرس، شماره شبا، احوال‌پرسی…) را ذخیره کنید</div>';
+}
+$('#snipIn').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.value.trim()) {
+    const val = e.target.value.trim();
+    S.snippets.unshift(val);
+    e.target.value = '';
+    save();
+    renderSnips();
+    send('addSnippet', { trigger: val.slice(0, 12), replacement: val });
+  }
+});
+$('#snipList').onclick = e => {
+  const b = e.target.closest('.item'); if (!b) return; const i = +b.dataset.i;
+  if (e.target.closest('[data-x]')) {
+    S.snippets.splice(i, 1);
+    save();
+    renderSnips();
+  } else deliver(S.snippets[i]);
+};
+renderSnips();
+
+/* ================= Web Search ================= */
+const ENGINES = { Google: 'https://www.google.com/search?q=%s', YouTube: 'https://www.youtube.com/results?search_query=%s', Wikipedia: 'https://fa.wikipedia.org/wiki/%s',
+  Translate: 'https://translate.google.com/?sl=auto&tl=fa&text=%s', Maps: 'https://www.google.com/maps/search/%s', GitHub: 'https://github.com/search?q=%s', DuckDuckGo: 'https://duckduckgo.com/?q=%s' };
+function renderEngines() { $('#engines').innerHTML = Object.keys(ENGINES).map(n => `<button class="chip spring ${S.engine === n ? 'on' : ''}" data-e="${n}">${n}</button>`).join(''); }
+$('#engines').onclick = e => { const n = e.target.dataset.e; if (n) { S.engine = n; save(); renderEngines(); $('#searchIn').focus(); } };
+$('#searchIn').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return; const q = e.target.value.trim(); if (!q) return;
+  const url = /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(q) && !q.includes(' ') ? 'https://' + q : /^https?:\/\//.test(q) ? q : ENGINES[S.engine].replace('%s', encodeURIComponent(q));
+  e.target.value = ''; app.close(); send('open', { target: url });
+});
+renderEngines();
+
+/* ================= World Clock ================= */
+const ZONES = ['Asia/Tehran', 'UTC', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Istanbul', 'Asia/Dubai', 'Asia/Karachi',
+  'Asia/Shanghai', 'Asia/Tokyo', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney'];
+const cityFa = { 'Asia/Tehran': 'تهران', 'UTC': 'گرینویچ', 'Europe/London': 'لندن', 'Europe/Paris': 'پاریس', 'Europe/Berlin': 'برلین', 'Europe/Istanbul': 'استانبول', 'Asia/Dubai': 'دبی', 'Asia/Karachi': 'کراچی', 'Asia/Shanghai': 'شانگهای', 'Asia/Tokyo': 'توکیو', 'America/New_York': 'نیویورک', 'America/Chicago': 'شیکاگو', 'America/Los_Angeles': 'لس آنجلس', 'Australia/Sydney': 'سیدنی' };
+const city = z => cityFa[z] || z.split('/').pop().replace(/_/g, ' ');
+function zoneParts(z) {
+  const now = new Date();
+  const t = new Intl.DateTimeFormat('fa-IR', { timeZone: z, hour: '2-digit', minute: '2-digit' }).format(now);
+  const d = (tz => new Date(now.toLocaleString('en-US', { timeZone: tz })))(z), l = new Date(now.toLocaleString('en-US'));
+  const diffH = Math.round((d - l) / 36e5 * 2) / 2, day = d.getDate() - l.getDate();
+  return { t, sub: `${day === 0 ? 'امروز' : day > 0 ? 'فردا' : 'دیروز'}، ${diffH === 0 ? 'هم‌زمان' : (diffH > 0 ? '+' : '') + diffH + ' ساعت'}` };
+}
+function renderZones() {
+  $('#zones').innerHTML = S.zones.map((z, i) => { const p = zoneParts(z);
+    return `<div class="zone"><span class="zt">${p.t}</span><span class="zn">${city(z)}<small>${p.sub}</small></span><button class="x" data-i="${i}">×</button></div>`; }).join('')
+    || '<div class="empty">از منوی زیر شهری اضافه کنید</div>';
+  $('#zoneAdd').innerHTML = '<option value="">＋ افزودن شهر…</option>' + ZONES.filter(z => !S.zones.includes(z)).map(z => `<option value="${z}">${city(z)}</option>`).join('');
+}
+$('#zones').onclick = e => { const i = e.target.dataset.i; if (i !== undefined) { S.zones.splice(+i, 1); save(); renderZones(); } };
+$('#zoneAdd').onchange = e => { if (e.target.value) { S.zones.push(e.target.value); save(); renderZones(); } };
+setInterval(() => { if (panel === 'clock') renderZones(); }, 15000);
+
+/* ================= Calculator ================= */
+function calc(s) {
+  if (!/^[\d\s+\-*/().%^,e]*$/i.test(s) || !s.trim()) return null;
+  try { const v = Function(`"use strict";return (${s.replace(/\^/g, '**').replace(/,/g, '')})`)(); return Number.isFinite(v) ? +v.toPrecision(12) : null; } catch { return null; }
+}
+$('#calcIn').addEventListener('input', e => { const v = calc(e.target.value); $('#calcOut').textContent = v === null ? (e.target.value ? '…' : '0') : v.toLocaleString('fa-IR', { maximumFractionDigits: 10 }); });
+$('#calcIn').addEventListener('keydown', e => { if (e.key === 'Enter') { const v = calc(e.target.value); if (v !== null) { e.target.value = String(v); copy(String(v)); } } });
+$('#calcOut').onclick = () => { const v = calc($('#calcIn').value); if (v !== null) copy(String(v)); };
+
+/* ================= Timer ================= */
+let tTotal = 300, tLeft = 300, tRun = null;
+const fmtT = s => `${String(s / 60 | 0).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+$('#timerPresets').innerHTML = [1, 5, 10, 25].map(m => `<button class="btn" data-m="${m}">${m} دقیقه</button>`).join('');
+$('#timerPresets').onclick = e => { const m = e.target.dataset.m; if (m) { clearInterval(tRun); tRun = null; tTotal = tLeft = m * 60; drawT(); } };
+function drawT() { $('#timerOut').textContent = fmtT(tLeft); $('#timerStart').textContent = tRun ? 'توقف' : 'شروع'; }
+$('#timerStart').onclick = () => {
+  if (tRun) { clearInterval(tRun); tRun = null; }
+  else {
+    if (!tLeft) tLeft = tTotal;
+    tRun = setInterval(() => {
+      tLeft--;
+      if (tLeft <= 0) { clearInterval(tRun); tRun = null; tLeft = 0; send('alarm'); sticky = true; app.open(); setTimeout(() => openWidget('timer'), 140); toast('⏰ زمان تایمر پایان یافت!'); }
+      drawT();
+    }, 1000);
+  }
+  drawT();
+};
+$('#timerReset').onclick = () => { clearInterval(tRun); tRun = null; tLeft = tTotal; drawT(); };
+drawT();
+
+/* ================= Text tools ================= */
+const TT = { 'بزرگ UPPER': 'upper', 'کوچک lower': 'lower', 'کلمات بزرگ Title': 'title', 'حذف فاصله‌ها': 'trim', 'تک خطی': 'oneline', 'وارونه معکوس': 'reverse', 'نامک اسلاگ': 'slug', 'رمزگذاری Base64': 'js:b64e', 'رمزگشایی Base64': 'js:b64d', 'شمارش کلمات': 'js:count' };
+const JS_TT = {
+  b64e: t => btoa(unescape(encodeURIComponent(t))), b64d: t => decodeURIComponent(escape(atob(t.trim()))),
+};
+$('#textTools').innerHTML = Object.entries(TT).map(([n, m]) => `<button class="spring" data-m="${m}"><b>${m.startsWith('js:') ? (m === 'js:count' ? '#' : '⇄') : 'Aa'}</b>${n}</button>`).join('');
+$('#textTools').onclick = e => {
+  const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return;
+  if (m.startsWith('js:')) {
+    const k = m.slice(3), t = lastClip;
+    if (!t) { toast('ابتدا متنی کپی کنید'); return; }
+    if (k === 'count') { toast(`${(t.trim().match(/\S+/g) || []).length} کلمه · ${t.length} نویسه`); return; }
+    try { deliver(JS_TT[k](t)); } catch { toast('متن قابل رمزگشایی نیست'); }
+    return;
+  }
+  if (S.paste) app.close(); send('transform', { mode: m, paste: S.paste }); if (!S.paste) toast('کلیپ‌بورد به‌روزرسانی شد');
+};
+
+/* ================= Password generator ================= */
+function genPw() {
+  const n = +$('#pwLen').value, cs = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*-_+=?';
+  const a = crypto.getRandomValues(new Uint32Array(n)); $('#pwOut').textContent = [...a].map(x => cs[x % cs.length]).join(''); $('#pwLenV').textContent = n;
+}
+$('#pwLen').oninput = genPw; $('#pwGen').onclick = genPw;
+$('#pwCopy').onclick = $('#pwOut').onclick = () => copy($('#pwOut').textContent, 'رمز عبور کپی شد ✓');
+
+/* ================= Units converter ================= */
+const U = {
+  in: [['سانتی‌متر (cm)', 2.54]], cm: [['اینچ (in)', 1 / 2.54], ['میلی‌متر (mm)', 10]], mm: [['اینچ (in)', 1 / 25.4], ['سانتی‌متر (cm)', .1]], m: [['فوت (ft)', 3.28084], ['سانتی‌متر (cm)', 100]], ft: [['متر (m)', .3048], ['اینچ (in)', 12]],
+  km: [['مایل (mi)', .621371], ['متر (m)', 1000]], mi: [['کیلومتر (km)', 1.609344]], kg: [['پوند (lb)', 2.20462], ['گرم (g)', 1000]], lb: [['کیلوگرم (kg)', .453592], ['اونس (oz)', 16]], g: [['اونس (oz)', .035274]], oz: [['گرم (g)', 28.3495]],
+  l: [['گالن (gal)', .264172], ['میلی‌لیتر (ml)', 1000]], gal: [['لیتر (l)', 3.78541]], mb: [['گیگابایت (gb)', 1 / 1024], ['کیلوبایت (kb)', 1024]], gb: [['مگابایت (mb)', 1024], ['ترابایت (tb)', 1 / 1024]], kmh: [['مایل بر ساعت (mph)', .621371]], mph: [['کیلومتر بر ساعت (kmh)', 1.609344]],
+};
+$('#unitIn').addEventListener('input', e => {
+  const m = e.target.value.trim().toLowerCase().match(/^(-?[\d.]+)\s*°?\s*([a-z/]+)$/); let out = [];
+  if (m) { const v = +m[1], u = m[2].replace('km/h', 'kmh');
+    if (u === 'c') out = [[v * 9 / 5 + 32, '°F فارنهایت'], [v + 273.15, 'K کلوین']]; else if (u === 'f') out = [[(v - 32) * 5 / 9, '°C سلسیوس']];
+    else if (U[u]) out = U[u].map(([n, f]) => [v * f, n]); }
+  $('#unitOut').innerHTML = out.length ? out.map(([v, n]) => { const s = `${+v.toPrecision(8)} ${n}`; return `<button class="item plain spring" data-s="${s}">${s}</button>`; }).join('') : `<div class="empty">${m ? 'واحد ناشناخته' : 'مثال: 5 km · 70 kg · 30 c · 12 in · 100 mb'}</div>`;
+});
+$('#unitOut').onclick = e => { const s = e.target.dataset.s; if (s) copy(s); };
+
+/* ================= General Settings ================= */
+const tog = (el, key, after) => { el.classList.toggle('on', !!S[key]); el.onclick = () => { S[key] = !S[key]; el.classList.toggle('on', S[key]); save(); after && after(); }; };
+if (OS !== 'windows') {
+  S.paste = false; $('#pasteRow').style.display = 'none';
+  $('#eyedrop').style.display = 'none';
+  $('#startLbl').textContent = 'اجرا هنگام لاگین';
+}
+tog($('#tStartup'), 'startup');
+tog($('#tPaste'), 'paste');
+tog($('#tMagnify'), 'magnify');
+tog($('#tUpdates'), 'updates');
+tog($('#tDirectInject'), 'directInject');
+tog($('#tVad'), 'vad');
+tog($('#tCapsulePreview'), 'capsulePreview');
+
+if (OS === 'windows') {
+  $('#tContext').classList.toggle('on', !!init.contextMenu);
+  $('#tContext').onclick = () => { const on = !$('#tContext').classList.contains('on'); $('#tContext').classList.toggle('on', on); send('contextMenu', { on });
+    toast(on ? 'به منوی راست‌کلیک افزوده شد' : 'از منوی راست‌کلیک حذف شد'); };
+} else $('#ctxRow').style.display = 'none';
+
+const SCREENS = Array.isArray(init.screens) ? init.screens : [];
+$('#edgeSel').value = S.edge === 'left' ? 'left' : 'right';
+$('#monSel').innerHTML = SCREENS.map((m, i) => `<option value="${i}">${esc(m.name || 'مانیتور ' + (i + 1))} · ${m.w}×${m.h}</option>`).join('');
+$('#monSel').value = String(Math.min(S.monitor || 0, Math.max(0, SCREENS.length - 1)));
+if (SCREENS.length < 2) $('#monRow').style.display = 'none';
+
+function applyPlacement() {
+  S.edge = $('#edgeSel').value; S.monitor = +$('#monSel').value || 0; save();
+  send('placement', { edge: S.edge, monitor: S.monitor });
+}
+$('#edgeSel').onchange = applyPlacement;
+$('#monSel').onchange = applyPlacement;
+app.placed = ({ edge }) => {
+  DIR = edge === 'left' ? -1 : 1;
+  document.body.classList.toggle('left', DIR < 0);
+  mx = -1;
+  toast(`پنل به لبه ${edge === 'left' ? 'چپ' : 'راست'} منتقل شد`);
+};
+if (S.edge === 'left') { DIR = -1; document.body.classList.add('left'); }
+
+$('#verNow').textContent = 'v' + (init.version || '1.2.0');
+function checkUpdates(manual) { $('#updLine').textContent = 'در حال بررسی…'; send('checkUpdate', { manual }); S.lastCheck = Date.now(); save(); }
+$('#aboutRow').onclick = () => checkUpdates(true);
+$('#updBtn').onclick = () => { $('#updBtn').textContent = 'در حال دریافت…'; send('installUpdate'); };
+app.updateInfo = info => {
+  const line = $('#updLine');
+  if (!info.latest) { line.textContent = 'خطا در ارتباط با سرور به‌روزرسانی'; if (info.manual) toast('بررسی به‌روزرسانی ناموفق بود'); return; }
+  if (info.newer) {
+    line.textContent = `نسخه جدید ${info.latest} موجود است`;
+    $('#updBtn').style.display = '';
+    toast(`نسخه ${info.latest} آماده دریافت است`);
+  } else {
+    line.textContent = 'شما از آخرین نسخه استفاده می‌کنید';
+    $('#updBtn').style.display = 'none';
+    if (info.manual) toast('نسخه پنل به‌روز است ✓');
+  }
+};
+app.quitForUpdate = () => { toast('در حال نصب به‌روزرسانی…'); setTimeout(() => send('quit'), 400); };
+if (S.updates !== false && Date.now() - (S.lastCheck || 0) > 864e5) setTimeout(() => checkUpdates(false), 8000);
+$('#quitBtn').onclick = () => send('quit');
+
+$('#edgeHandle')?.addEventListener('click', () => {
+  send('edge');
+  app.open();
+});
+$('#edgeHandle')?.addEventListener('mouseenter', () => {
+  send('edge');
+  app.open();
+});
+
+applyTheme();
+renderAll();
+save();
+S.apps.forEach(a => send('refreshIcon', { id: a.id, path: a.path }));
+send('ready');
+</script>
+</body>
+</html>

@@ -12,9 +12,34 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Zero Studio",
         "width": 800,
         "height": 600
+      },
+      {
+        "label": "preview",
+        "title": "Interactive Preview",
+        "width": 512,
+        "height": 380,
+        "transparent": true,
+        "decorations": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "url": "/?window=preview"
+      },
+      {
+        "label": "widget",
+        "title": "Floating Voice Widget",
+        "width": 450,
+        "height": 450,
+        "transparent": true,
+        "decorations": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "url": "/?window=widget"
       }
     ],
     "security": {
@@ -30,8 +55,11 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "externalBin": [
+      "bin/zero-daemon"
+    ],
     "resources": [
-      "../../target/release/zero-daemon.exe"
+      "scripts/*"
     ],
     "windows": {
       "nsis": {

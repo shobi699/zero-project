@@ -19,6 +19,15 @@ jobs:
       - run: cargo build --workspace
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
+      - name: Check Daemon RAM usage
+        shell: powershell
+        run: |
+          Start-Process -FilePath "target\debug\zero-daemon.exe" -NoNewWindow
+          Start-Sleep -Seconds 3
+          $mem = (Get-Process zero-daemon).WorkingSet64 / 1MB
+          Stop-Process -Name zero-daemon -Force
+          if ($mem -gt 50) { Write-Error "RAM > 50MB: $mem MB"; exit 1 }
+          Write-Output "RAM usage OK: $mem MB"
 
   server:
     name: NestJS (build + test)
@@ -53,3 +62,11 @@ jobs:
         run: npm install
       - working-directory: zero-studio
         run: npx tauri build
+      - name: Check Installer size
+        shell: powershell
+        working-directory: zero-studio
+        run: |
+          $msi = Get-ChildItem src-tauri\target\release\bundle\msi\*.msi
+          $size = $msi.Length / 1MB
+          if ($size -gt 15) { Write-Error "Installer > 15MB: $size MB"; exit 1 }
+          Write-Output "Installer size OK: $size MB"

@@ -10,17 +10,71 @@ pub struct LocalEngine {
     last_used: Mutex<Instant>,
 }
 
+fn resolve_whisper_cli() -> PathBuf {
+    let local_app_data = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Zero")
+        .join("bin")
+        .join("whisper-cli.exe");
+    if local_app_data.exists() {
+        return local_app_data;
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidate1 = exe_dir.join("bin").join("whisper-cli.exe");
+            if candidate1.exists() {
+                return candidate1;
+            }
+            let candidate2 = exe_dir.join("whisper-cli.exe");
+            if candidate2.exists() {
+                return candidate2;
+            }
+        }
+    }
+
+    let cwd_bin = PathBuf::from("bin").join("whisper-cli.exe");
+    if cwd_bin.exists() {
+        return cwd_bin;
+    }
+
+    local_app_data
+}
+
+fn resolve_model_path() -> Result<PathBuf> {
+    let models_dir = crate::config::resolve_models_dir();
+    let active_model = crate::config::get_config().active_model;
+    let model_path = models_dir.join(&active_model);
+
+    if model_path.exists() && crate::config::is_valid_ggml_model(&model_path) {
+        return Ok(model_path);
+    }
+
+    // Try finding any valid installed model
+    let installed = crate::config::get_installed_models();
+    if let Some(fallback) = installed.first() {
+        info!(
+            "configured active model '{}' invalid, falling back to '{}'",
+            active_model, fallback.filename
+        );
+        let fallback_path = models_dir.join(&fallback.filename);
+        crate::config::update_config(|c| c.active_model = fallback.filename.clone());
+        return Ok(fallback_path);
+    }
+
+    anyhow::bail!(
+        "no valid Whisper GGML model found in {}",
+        models_dir.display()
+    )
+}
+
 impl LocalEngine {
     pub fn new() -> Self {
-        let active_model = crate::config::get_config().active_model;
         let models_dir = crate::config::resolve_models_dir();
-        let base_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Zero");
-
+        let active_model = crate::config::get_config().active_model;
         Self::with_paths(
             models_dir.join(&active_model),
-            base_dir.join("bin").join("whisper-cli.exe"),
+            resolve_whisper_cli(),
         )
     }
 
@@ -32,23 +86,13 @@ impl LocalEngine {
         }
     }
 
-    // Lazy load the model
+    // Lazy load / verify the model
     pub fn load_model(&self) -> Result<()> {
         let mut loaded = self.is_loaded.lock().unwrap();
         if !*loaded {
-            info!("Lazy Loading local whisper model into memory...");
+            info!("Verifying local whisper model and executor...");
 
-            // Re-read active model from config in case it changed
-            let active_model = crate::config::get_config().active_model;
-            let model_path = crate::config::resolve_models_dir().join(&active_model);
-
-            // Verify model and executor exist — never fabricate them.
-            if !model_path.exists() {
-                anyhow::bail!(
-                    "local whisper model not found at {}",
-                    model_path.display()
-                );
-            }
+            let model_path = resolve_model_path()?;
             if !self.executor_path.exists() {
                 anyhow::bail!(
                     "whisper-cli executor not found at {}",
@@ -60,7 +104,7 @@ impl LocalEngine {
             let mut global_loaded = LOCAL_ENGINE_LOADED.lock().unwrap();
             *global_loaded = true;
 
-            info!("Whisper model loaded successfully: {}", active_model);
+            info!("Whisper model verified successfully: {}", model_path.display());
         }
 
         // Update last used timestamp
@@ -72,6 +116,15 @@ impl LocalEngine {
         *global_last_used = Some(now);
 
         Ok(())
+    }
+
+    // Invalidate model so the next transcription re-verifies with current active model
+    #[allow(dead_code)]
+    pub fn invalidate_model(&self) {
+        let mut loaded = self.is_loaded.lock().unwrap();
+        *loaded = false;
+        let mut global_loaded = LOCAL_ENGINE_LOADED.lock().unwrap();
+        *global_loaded = false;
     }
 
     // Unload model to release RAM
@@ -87,25 +140,46 @@ impl LocalEngine {
     }
 
     pub async fn transcribe(&self, wav_path: &Path) -> Result<String> {
-        // Ensure loaded (lazy load); fails if model/executor are missing
+        // Ensure verified (fails if model/executor are missing)
         self.load_model()?;
 
-        // Read active model from config each time
-        let active_model = crate::config::get_config().active_model;
-        let model_path = crate::config::resolve_models_dir().join(&active_model);
+        let model_path = resolve_model_path()?;
+        info!("transcribing locally using model: {}", model_path.display());
 
-        info!("transcribing locally using model: {}", active_model);
+        #[allow(unused_mut)]
+        let mut cmd = tokio::process::Command::new(&self.executor_path);
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
 
-        let output = tokio::process::Command::new(&self.executor_path)
+        // Dynamically compute optimal compute threads (between 4 and 8)
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| (n.get() / 2).max(4).min(8).to_string())
+            .unwrap_or_else(|_| "6".to_string());
+
+        let output_future = cmd
             .arg("-m")
             .arg(&model_path)
             .arg("-f")
             .arg(wav_path)
-            .arg("-nt")
+            .arg("-nt")             // No timestamps
+            .arg("-np")             // No prints (clean output)
+            .arg("-sns")            // Suppress non-speech tokens (anti-hallucination)
+            .arg("-nf")             // No temperature fallback
+            .arg("-tp")
+            .arg("0.0")             // Greedy decoding (highest accuracy & determinism)
+            .arg("-nth")
+            .arg("0.65")            // No-speech threshold
             .arg("-l")
-            .arg("auto")
-            .output()
+            .arg("fa")              // Persian language
+            .arg("-t")
+            .arg(&num_threads)
+            .output();
+
+        let output = tokio::time::timeout(Duration::from_secs(60), output_future)
             .await
+            .map_err(|_| anyhow::anyhow!("whisper-cli execution timed out after 60s"))?
             .context("failed to execute whisper-cli process")?;
 
         if !output.status.success() {
@@ -114,7 +188,22 @@ impl LocalEngine {
             anyhow::bail!("local transcription failed: {}", err_msg);
         }
 
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let raw_stdout = String::from_utf8_lossy(&output.stdout);
+        let text = raw_stdout
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| {
+                !l.is_empty()
+                    && !l.starts_with("load_backend:")
+                    && !l.starts_with("system_info:")
+                    && !l.starts_with("read_audio_data:")
+                    && !l.starts_with("whisper_")
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+
         Ok(text)
     }
 }

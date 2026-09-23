@@ -32,7 +32,10 @@ pub fn set_cmd_sender(tx: std::sync::mpsc::Sender<DaemonCmd>) {
 #[serde(tag = "type")]
 pub enum IpcRequest {
     GetStatus,
-    TriggerRecord,
+    TriggerRecord {
+        #[serde(default)]
+        target_hwnd: Option<isize>,
+    },
     RecordForNotepad,
     UpdateSettings { settings: String },
     Subscribe,
@@ -80,6 +83,9 @@ pub enum IpcResponse {
     Transcription { text: String, strategy: String },
     TranscriptionPreview { text: String, x: i32, y: i32 },
     TranscriptionResult { text: String },
+    StartBrowserStt,
+    StopBrowserStt,
+    ToggleWidget,
     ErrorMsg { message: String },
     Ack { ok: bool },
     Config { config: String },
@@ -117,6 +123,7 @@ impl IpcServer {
                 // Set up the named pipe server instance
                 let server = match ServerOptions::new()
                     .first_pipe_instance(is_first)
+                    .reject_remote_clients(true)
                     .create(pipe_name)
                 {
                     Ok(s) => {
@@ -177,6 +184,18 @@ impl IpcServer {
         let _ = self.tx.send(IpcResponse::ErrorMsg { message });
     }
 
+    pub fn broadcast_start_browser_stt(&self) {
+        let _ = self.tx.send(IpcResponse::StartBrowserStt);
+    }
+
+    pub fn broadcast_stop_browser_stt(&self) {
+        let _ = self.tx.send(IpcResponse::StopBrowserStt);
+    }
+
+    pub fn broadcast_toggle_widget(&self) {
+        let _ = self.tx.send(IpcResponse::ToggleWidget);
+    }
+
     fn current_status(&self) -> String {
         self.status.lock().unwrap().clone()
     }
@@ -215,11 +234,11 @@ async fn handle_client(
                             Ok(IpcRequest::GetStatus) => IpcResponse::StatusUpdate {
                                 status: server_state.current_status(),
                             },
-                            Ok(IpcRequest::TriggerRecord) => {
-                                info!("IPC TriggerRecord received");
+                            Ok(IpcRequest::TriggerRecord { target_hwnd }) => {
+                                info!("IPC TriggerRecord received with target: {:?}", target_hwnd);
                                 let ok = CMD_TX
                                     .get()
-                                    .is_some_and(|tx| tx.send(DaemonCmd::ToggleRecording).is_ok());
+                                    .is_some_and(|tx| tx.send(DaemonCmd::ToggleRecording { target_hwnd }).is_ok());
                                 IpcResponse::Ack { ok }
                             }
                             Ok(IpcRequest::RecordForNotepad) => {
@@ -270,7 +289,9 @@ async fn handle_client(
                                         crate::config::update_config(|c| {
                                             c.hotkey = payload.hotkey;
                                             c.engine_mode = payload.engine;
-                                            c.unload_timeout = payload.unload_timeout;
+                                            if let Some(ut) = payload.unload_timeout {
+                                                c.unload_timeout = ut as u32;
+                                            }
                                             if let Some(ref mode) = payload.overlay_mode {
                                                 c.overlay_mode = mode.clone();
                                             }
@@ -279,6 +300,39 @@ async fn handle_client(
                                             }
                                             if let Some(im) = payload.interactive_mode {
                                                 c.interactive_mode = im;
+                                            }
+                                            if let Some(asb) = payload.auto_submit {
+                                                c.auto_submit = asb;
+                                            }
+                                            if let Some(ref ask) = payload.auto_submit_key {
+                                                c.auto_submit_key = ask.clone();
+                                            }
+                                            if let Some(ats) = payload.append_trailing_space {
+                                                c.append_trailing_space = ats;
+                                            }
+                                            if let Some(afb) = payload.audio_feedback {
+                                                c.audio_feedback = afb;
+                                            }
+                                            if let Some(vst) = payload.vad_silence_timeout {
+                                                c.vad_silence_timeout = vst as f32;
+                                            }
+                                            if let Some(ref hm) = payload.hotkey_mode {
+                                                c.hotkey_mode = hm.clone();
+                                            }
+                                            if let Some(ref pm) = payload.polish_mode {
+                                                c.polish_mode = pm.clone();
+                                            }
+                                            if let Some(ref val) = payload.llm_provider {
+                                                c.llm_provider = val.clone();
+                                            }
+                                            if let Some(ref val) = payload.llm_endpoint {
+                                                c.llm_endpoint = val.clone();
+                                            }
+                                            if let Some(ref val) = payload.llm_api_key {
+                                                c.llm_api_key = val.clone();
+                                            }
+                                            if let Some(ref val) = payload.llm_model {
+                                                c.llm_model = val.clone();
                                             }
                                         });
                                         IpcResponse::Ack { ok }
@@ -324,13 +378,16 @@ async fn handle_client(
                             Ok(IpcRequest::SetActiveModel { model_id }) => {
                                 let models_dir = crate::config::resolve_models_dir();
                                 let model_path = models_dir.join(&model_id);
-                                if model_path.exists() {
-                                    crate::config::update_config(|c| c.active_model = model_id);
+                                if model_path.exists() && crate::config::is_valid_ggml_model(&model_path) {
+                                    crate::config::update_config(|c| c.active_model = model_id.clone());
+                                    let mut loaded = crate::local_engine::LOCAL_ENGINE_LOADED.lock().unwrap();
+                                    *loaded = false;
+                                    info!("SetActiveModel: switched active model to '{}' and invalidated engine cache", model_id);
                                     IpcResponse::Ack { ok: true }
                                 } else {
-                                    warn!("SetActiveModel: model file not found: {}", model_path.display());
+                                    warn!("SetActiveModel: model file not found or invalid: {}", model_path.display());
                                     IpcResponse::ErrorMsg {
-                                        message: format!("model file not found: {}", model_id),
+                                        message: format!("model file not found or invalid GGML binary: {}", model_id),
                                     }
                                 }
                             }
@@ -590,8 +647,61 @@ async fn handle_client(
 struct SettingsPayload {
     engine: String,
     hotkey: String,
-    unload_timeout: u32,
+    #[serde(alias = "hotkey_mode")]
+    hotkey_mode: Option<String>,
+    #[serde(alias = "unload_timeout")]
+    unload_timeout: Option<u64>,
+    #[serde(alias = "overlay_mode")]
     overlay_mode: Option<String>,
+    #[serde(alias = "translate_mode")]
     translate_mode: Option<String>,
+    #[serde(alias = "polish_mode")]
+    polish_mode: Option<String>,
+    #[serde(alias = "interactive_mode")]
     interactive_mode: Option<bool>,
+    #[serde(alias = "auto_submit")]
+    auto_submit: Option<bool>,
+    #[serde(alias = "auto_submit_key")]
+    auto_submit_key: Option<String>,
+    #[serde(alias = "append_trailing_space")]
+    append_trailing_space: Option<bool>,
+    #[serde(alias = "audio_feedback")]
+    audio_feedback: Option<bool>,
+    #[serde(alias = "vad_silence_timeout")]
+    vad_silence_timeout: Option<f64>,
+    #[serde(alias = "floating_hotkey")]
+    #[allow(dead_code)]
+    floating_hotkey: Option<bool>,
+    #[serde(alias = "threads_count")]
+    #[allow(dead_code)]
+    threads_count: Option<u32>,
+    #[serde(alias = "llm_provider")]
+    llm_provider: Option<String>,
+    #[serde(alias = "llm_endpoint")]
+    llm_endpoint: Option<String>,
+    #[serde(alias = "llm_api_key")]
+    llm_api_key: Option<String>,
+    #[serde(alias = "llm_model")]
+    llm_model: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+
+    use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+    
+    #[tokio::test]
+    async fn test_local_pipe_connection_with_reject_remote() {
+        let pipe_name = r"\\.\pipe\zero-ipc-test-local";
+        let _server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .reject_remote_clients(true)
+            .create(pipe_name)
+            .expect("Failed to create test pipe server");
+
+        let client = ClientOptions::new()
+            .open(pipe_name);
+        
+        assert!(client.is_ok(), "Local client should connect successfully to pipe with reject_remote_clients(true)");
+    }
 }

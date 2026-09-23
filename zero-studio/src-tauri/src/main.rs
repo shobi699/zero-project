@@ -380,13 +380,198 @@ async fn test_model(model_id: String) -> Result<serde_json::Value, String> {
     let path = models_dir.join(&model_id);
     if path.exists() {
         let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        let len = meta.len();
+        let mut is_valid = len >= 10_000_000;
+        if is_valid {
+            use std::io::Read;
+            if let Ok(mut f) = std::fs::File::open(&path) {
+                let mut magic = [0u8; 4];
+                if f.read_exact(&mut magic).is_ok() {
+                    is_valid = magic == [0x6c, 0x6d, 0x67, 0x67]
+                        || magic == [0x66, 0x6d, 0x67, 0x67]
+                        || magic == [0x76, 0x6d, 0x67, 0x67]
+                        || magic == *b"GGUF";
+                } else {
+                    is_valid = false;
+                }
+            } else {
+                is_valid = false;
+            }
+        }
         Ok(serde_json::json!({
             "exists": true,
-            "size_bytes": meta.len(),
+            "is_valid": is_valid,
+            "size_bytes": len,
             "path": path.to_string_lossy(),
         }))
     } else {
-        Ok(serde_json::json!({ "exists": false }))
+        Ok(serde_json::json!({ "exists": false, "is_valid": false }))
+    }
+}
+
+#[tauri::command]
+async fn test_model_inference(model_id: String) -> Result<serde_json::Value, String> {
+    let models_dir = resolve_models_dir();
+    let model_path = models_dir.join(&model_id);
+    if !model_path.exists() {
+        return Err(format!("فایل مدل {} یافت نشد", model_id));
+    }
+
+    let local_bin = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("Zero")
+        .join("bin")
+        .join("whisper-cli.exe");
+
+    let whisper_cli = if local_bin.exists() {
+        local_bin
+    } else {
+        std::path::PathBuf::from("bin").join("whisper-cli.exe")
+    };
+
+    if !whisper_cli.exists() {
+        return Err("ابزار whisper-cli.exe در سیستم یافت نشد".to_string());
+    }
+
+    let tmp_wav = std::env::temp_dir().join(format!(
+        "zero_test_{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+
+    // Generate a 1-second 16kHz mono 16-bit PCM WAV acoustic wave
+    let mut pcm_bytes = Vec::with_capacity(32000);
+    for i in 0..16000 {
+        let sample = (3000.0 * (2.0 * std::f32::consts::PI * 440.0 * (i as f32) / 16000.0).sin()) as i16;
+        pcm_bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    let sample_rate: u32 = 16000;
+    let channels: u16 = 1;
+    let bits: u16 = 16;
+    let byte_rate = sample_rate * (channels as u32) * ((bits as u32) / 8);
+    let block_align = channels * (bits / 8);
+    let mut wav_file_data = Vec::with_capacity(44 + pcm_bytes.len());
+    wav_file_data.extend_from_slice(b"RIFF");
+    wav_file_data.extend_from_slice(&(36 + pcm_bytes.len() as u32).to_le_bytes());
+    wav_file_data.extend_from_slice(b"WAVEfmt ");
+    wav_file_data.extend_from_slice(&16u32.to_le_bytes());
+    wav_file_data.extend_from_slice(&1u16.to_le_bytes());
+    wav_file_data.extend_from_slice(&channels.to_le_bytes());
+    wav_file_data.extend_from_slice(&sample_rate.to_le_bytes());
+    wav_file_data.extend_from_slice(&byte_rate.to_le_bytes());
+    wav_file_data.extend_from_slice(&block_align.to_le_bytes());
+    wav_file_data.extend_from_slice(&bits.to_le_bytes());
+    wav_file_data.extend_from_slice(b"data");
+    wav_file_data.extend_from_slice(&(pcm_bytes.len() as u32).to_le_bytes());
+    wav_file_data.extend_from_slice(&pcm_bytes);
+
+    let _ = std::fs::write(&tmp_wav, &wav_file_data);
+
+    let start_time = std::time::Instant::now();
+    let mut cmd = tokio::process::Command::new(&whisper_cli);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| (n.get() / 2).max(4).min(8).to_string())
+        .unwrap_or_else(|_| "6".to_string());
+
+    let output_res = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        cmd.arg("-m")
+            .arg(&model_path)
+            .arg("-f")
+            .arg(&tmp_wav)
+            .arg("-nt")
+            .arg("-np")
+            .arg("-sns")
+            .arg("-nf")
+            .arg("-tp")
+            .arg("0.0")
+            .arg("-nth")
+            .arg("0.65")
+            .arg("-l")
+            .arg("fa")
+            .arg("-t")
+            .arg(&num_threads)
+            .output(),
+    )
+    .await;
+
+    let duration_ms = start_time.elapsed().as_millis();
+    let _ = std::fs::remove_file(&tmp_wav);
+
+    match output_res {
+        Ok(Ok(output)) => {
+            let raw_stdout = String::from_utf8_lossy(&output.stdout);
+            let text = raw_stdout
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| {
+                    !l.is_empty()
+                        && !l.starts_with("load_backend:")
+                        && !l.starts_with("system_info:")
+                        && !l.starts_with("read_audio_data:")
+                        && !l.starts_with("whisper_")
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string();
+
+            Ok(serde_json::json!({
+                "ok": true,
+                "duration_ms": duration_ms,
+                "output": text,
+                "model_id": model_id,
+            }))
+        }
+        Ok(Err(e)) => Err(format!("خطا در اجرای فرآیند مدل: {}", e)),
+        Err(_) => Err("زمان اجرای تست مدل از ۳۰ ثانیه بیشتر شد (تایم‌اوت)".to_string()),
+    }
+}
+
+#[tauri::command]
+async fn test_llm_api(endpoint: String, api_key: String, model: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .no_proxy()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let endpoint = endpoint.trim_end_matches('/').replace("localhost", "127.0.0.1");
+    let url = if endpoint.ends_with("/chat/completions") {
+        endpoint.to_string()
+    } else {
+        format!("{}/chat/completions", endpoint)
+    };
+
+    let mut req = client.post(&url);
+    if !api_key.trim().is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", api_key.trim()));
+    }
+
+    let payload = serde_json::json!({
+        "model": model.trim(),
+        "messages": [
+            { "role": "user", "content": "Hi, just a ping." }
+        ],
+        "max_tokens": 5
+    });
+
+    let res = req.json(&payload).send().await.map_err(|e| format!("Network Error: {}", e))?;
+    
+    if res.status().is_success() {
+        Ok("اتصال موفق بود!".to_string())
+    } else {
+        let status = res.status();
+        let err_text = res.text().await.unwrap_or_default();
+        Err(format!("خطای API ({}): {}", status, err_text))
     }
 }
 
@@ -588,9 +773,10 @@ async fn download_model(
     let models_dir = resolve_models_dir();
     std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
     let dest = models_dir.join(&model_id);
+    let temp_dest = models_dir.join(format!("{}.part", model_id));
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
+        .timeout(std::time::Duration::from_secs(1200))
         .build()
         .map_err(|e| format!("failed to create HTTP client: {}", e))?;
 
@@ -602,20 +788,37 @@ async fn download_model(
 
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("HTTP error: {}", status.as_u16()));
+        let code = status.as_u16();
+        let msg = if code == 404 {
+            "فایل مورد نظر در سرور یافت نشد (خطای ۴۰۴). لطفاً آدرس مدل یا اتصال را بررسی نمایید.".to_string()
+        } else if code == 403 {
+            "دسترسی به سرور دانلود محدود است (خطای ۴۰۳).".to_string()
+        } else {
+            format!("خطای سرور دانلود (کد {}). لطفاً اتصال اینترنت خود را بررسی نمایید.", code)
+        };
+        return Err(msg);
     }
 
     let total = resp.content_length().unwrap_or(0);
     let mut bytes_downloaded: u64 = 0;
-    let file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+    let file = std::fs::File::create(&temp_dest).map_err(|e| e.to_string())?;
     let mut stream = resp.bytes_stream();
 
     use tokio::io::AsyncWriteExt;
     let mut async_file = tokio::fs::File::from_std(file);
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| format!("stream error: {}", e))?;
-        async_file.write_all(&chunk).await.map_err(|e| format!("write error: {}", e))?;
+        let chunk = match chunk_result {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp_dest);
+                return Err(format!("stream error: {}", e));
+            }
+        };
+        if let Err(e) = async_file.write_all(&chunk).await {
+            let _ = std::fs::remove_file(&temp_dest);
+            return Err(format!("write error: {}", e));
+        }
         bytes_downloaded += chunk.len() as u64;
 
         let _ = app.emit(
@@ -628,7 +831,25 @@ async fn download_model(
         );
     }
 
-    async_file.flush().await.map_err(|e| format!("flush error: {}", e))?;
+    if let Err(e) = async_file.flush().await {
+        let _ = std::fs::remove_file(&temp_dest);
+        return Err(format!("flush error: {}", e));
+    }
+    drop(async_file);
+
+    if total > 0 && bytes_downloaded < total {
+        let _ = std::fs::remove_file(&temp_dest);
+        return Err(format!(
+            "download truncated: received {} of {} bytes",
+            bytes_downloaded, total
+        ));
+    }
+
+    if dest.exists() {
+        let _ = std::fs::remove_file(&dest);
+    }
+    std::fs::rename(&temp_dest, &dest)
+        .map_err(|e| format!("failed to finalize downloaded file: {}", e))?;
 
     let _ = app.emit(
         "model-download-complete",
@@ -636,6 +857,22 @@ async fn download_model(
     );
 
     Ok(model_id)
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("خطا در باز کردن لینک: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -681,17 +918,10 @@ async fn auto_convert_hf_model(
 
     let script_path = app
         .path()
-        .app_local_data_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("scripts")
-        .join("auto_convert.py");
+        .resolve("scripts/auto_convert.py", tauri::path::BaseDirectory::Resource)
+        .unwrap_or_else(|_| std::path::PathBuf::from("scripts/auto_convert.py"));
         
-    // fallback if not found in appData (for dev)
-    let script_path_str = if script_path.exists() {
-        script_path.to_string_lossy().to_string()
-    } else {
-        "scripts/auto_convert.py".to_string()
-    };
+    let script_path_str = script_path.to_string_lossy().to_string();
 
     let mut cmd = tokio::process::Command::new("python");
     cmd.arg(script_path_str)
@@ -754,44 +984,188 @@ async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
+
+            // Tray Setup
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
+            use tauri::Manager;
+            
+            let quit_i = MenuItem::with_id(app, "quit", "خروج", true, None::<&str>).unwrap();
+            let menu = Menu::with_items(app, &[&quit_i]).unwrap();
+            
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Zero Studio")
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    if event.id.as_ref() == "quit" {
+                        app.exit(0);
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+fn ensure_daemon_started(app_handle: &tauri::AppHandle) {
+    use tauri_plugin_shell::ShellExt;
+    if let Ok(sidecar) = app_handle.shell().sidecar("zero-daemon") {
+        if let Ok(_) = sidecar.spawn() {
+            return;
+        }
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            let candidates = [
+                exe_dir.join("zero-daemon.exe"),
+                exe_dir.join("zero-daemon-x86_64-pc-windows-msvc.exe"),
+                exe_dir.join("bin").join("zero-daemon.exe"),
+                exe_dir.join("bin").join("zero-daemon-x86_64-pc-windows-msvc.exe"),
+                exe_dir.parent().map(|p| p.join("zero-daemon.exe")).unwrap_or_default(),
+                exe_dir.parent().map(|p| p.join("target").join("release").join("zero-daemon.exe")).unwrap_or_default(),
+            ];
+
+            for candidate in &candidates {
+                if candidate.is_file() {
+                    #[cfg(target_os = "windows")]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        let _ = std::process::Command::new(candidate)
+                            .creation_flags(0x08000000 | 0x00000008) // CREATE_NO_WINDOW | DETACHED_PROCESS
+                            .spawn();
+                        return;
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let _ = std::process::Command::new(candidate).spawn();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Daemon IPC
+            let app_handle_for_daemon = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, BufReader};
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
                 use tokio::net::windows::named_pipe::ClientOptions;
+                
+                let mut launch_attempts = 0;
+                ensure_daemon_started(&app_handle_for_daemon);
+                
                 loop {
                     match ClientOptions::new().open(PIPE_NAME) {
-                        Ok(pipe) => {
+                        Ok(mut pipe) => {
+                            launch_attempts = 0;
+                            let subscribe_msg = "{\"type\":\"Subscribe\"}\n";
+                            let _ = pipe.write_all(subscribe_msg.as_bytes()).await;
+
                             let mut reader = BufReader::new(pipe);
                             let mut line = String::new();
                             while let Ok(n) = reader.read_line(&mut line).await {
                                 if n == 0 { break; }
-                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                                    if let Some(msg_type) = val.get("TranscriptionPreview") {
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                                    if val.get("type").and_then(|t| t.as_str()) == Some("TranscriptionPreview") {
                                         if let (Some(text), Some(x), Some(y)) = (
-                                            msg_type.get("text").and_then(|t| t.as_str()),
-                                            msg_type.get("x").and_then(|x| x.as_i64()),
-                                            msg_type.get("y").and_then(|y| y.as_i64()),
+                                            val.get("text").and_then(|t| t.as_str()),
+                                            val.get("x").and_then(|x| x.as_i64()),
+                                            val.get("y").and_then(|y| y.as_i64()),
                                         ) {
-                                            let _ = app_handle.emit("interactive-preview", serde_json::json!({
+                                            if let Some(window) = app_handle_for_daemon.get_webview_window("preview") {
+                                                let _ = window.center();
+                                                let _ = window.show();
+                                                let _ = window.set_focus();
+                                            }
+                                            let _ = app_handle_for_daemon.emit("interactive-preview", serde_json::json!({
                                                 "text": text,
                                                 "x": x,
                                                 "y": y
                                             }));
                                         }
+                                    } else if val.get("type").and_then(|t| t.as_str()) == Some("StartBrowserStt") {
+                                        if let Some(window) = app_handle_for_daemon.get_webview_window("widget") {
+                                            let _ = window.center();
+                                            let _ = window.show();
+                                            let _ = window.set_focus();
+                                        }
+                                        let _ = app_handle_for_daemon.emit("start-browser-stt", ());
+                                    } else if val.get("type").and_then(|t| t.as_str()) == Some("StopBrowserStt") {
+                                        if let Some(window) = app_handle_for_daemon.get_webview_window("widget") {
+                                            let _ = window.hide();
+                                        }
+                                        let _ = app_handle_for_daemon.emit("stop-browser-stt", ());
                                     }
                                 }
                                 line.clear();
                             }
                         }
-                        Err(_) => {}
+                        Err(e) => {
+                            if e.kind() == std::io::ErrorKind::NotFound && launch_attempts < 5 {
+                                launch_attempts += 1;
+                                ensure_daemon_started(&app_handle_for_daemon);
+                                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                                continue;
+                            }
+                        }
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             });
+
+            // Auto-start TTS backend servers
+            tauri::async_runtime::spawn(async move {
+                let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf();
+                
+                let zero_server_dir = base_dir.join("zero-server");
+                if zero_server_dir.exists() {
+                    let python_dir = zero_server_dir.join("python-engines").join("tts");
+                    
+                    // Python TTS Engine
+                    let mut python_cmd = tokio::process::Command::new("python");
+                    python_cmd.current_dir(&python_dir);
+                    python_cmd.arg("server.py");
+                    #[cfg(target_os = "windows")]
+                    python_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    let _ = python_cmd.spawn();
+
+                    // NestJS Server
+                    let mut nest_cmd = tokio::process::Command::new(if cfg!(target_os = "windows") { "npm.cmd" } else { "npm" });
+                    nest_cmd.current_dir(&zero_server_dir);
+                    nest_cmd.arg("run").arg("start:dev");
+                    #[cfg(target_os = "windows")]
+                    nest_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    let _ = nest_cmd.spawn();
+                }
+            });
+
             Ok(())
         })
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .invoke_handler(tauri::generate_handler![
             get_daemon_status,
             trigger_record,
@@ -805,7 +1179,10 @@ fn main() {
             get_models_dir,
             set_models_dir,
             open_models_dir,
+            open_external_url,
             test_model,
+            test_model_inference,
+            test_llm_api,
             check_stt_status,
             download_model,
             auto_convert_hf_model,

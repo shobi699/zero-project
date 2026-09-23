@@ -69,6 +69,21 @@ describe('QuotaService', () => {
       const limit = await service.getLimit('user-id');
       expect(limit).toBe(86400);
     });
+
+    it('should cache limit and not query DB twice', async () => {
+      mockPrisma.user.findUnique.mockClear();
+      mockPrisma.user.findUnique.mockResolvedValue({ subscription: 'free' });
+      mockSettings.getSettingValue.mockResolvedValue(1800);
+
+      // First call
+      const limit1 = await service.getLimit('user-cache-test');
+      // Second call
+      const limit2 = await service.getLimit('user-cache-test');
+      
+      expect(limit1).toBe(1800);
+      expect(limit2).toBe(1800);
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('quota checks', () => {

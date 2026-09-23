@@ -21,6 +21,8 @@ pub struct DaemonConfig {
     pub active_model: String,
     pub engine_mode: String,
     pub hotkey: String,
+    #[serde(default = "default_hotkey_mode")]
+    pub hotkey_mode: String,
     pub unload_timeout: u32,
     #[serde(default)]
     pub models_dir: String,
@@ -45,10 +47,56 @@ pub struct DaemonConfig {
     /// Interactive preview mode (shows floating text box instead of instant injection)
     #[serde(default)]
     pub interactive_mode: bool,
+    /// Auto-submit after injection (press Enter or Ctrl+Enter automatically)
+    #[serde(default)]
+    pub auto_submit: bool,
+    /// Auto-submit key type: "enter" | "ctrl_enter"
+    #[serde(default = "default_auto_submit_key")]
+    pub auto_submit_key: String,
+    /// Append a trailing space to injected text
+    #[serde(default)]
+    pub append_trailing_space: bool,
+    /// Audio feedback beep sounds on recording start/stop
+    #[serde(default)]
+    pub audio_feedback: bool,
+    /// VAD silence auto-stop duration in seconds
+    #[serde(default = "default_vad_silence_timeout")]
+    pub vad_silence_timeout: f32,
+    /// LLM Polish mode: "off" | "grammar" | "formal" | "informal" | <custom_prompt_id>
+    #[serde(default)]
+    pub polish_mode: String,
+    
+    /// LLM Provider: "openai", "ollama", "groq", "lmstudio", "gemini", "custom"
+    #[serde(default = "default_llm_provider")]
+    pub llm_provider: String,
+    
+    /// LLM Endpoint (e.g. http://localhost:11434/v1 or https://api.openai.com/v1)
+    #[serde(default = "default_llm_endpoint")]
+    pub llm_endpoint: String,
+    
+    /// API Key for the LLM Provider
+    #[serde(default)]
+    pub llm_api_key: String,
+    
+    /// Model name to use (e.g. gpt-4o-mini, llama3)
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+}
+
+fn default_auto_submit_key() -> String {
+    "enter".to_string()
+}
+
+fn default_hotkey_mode() -> String {
+    "toggle".to_string()
+}
+
+fn default_vad_silence_timeout() -> f32 {
+    2.0
 }
 
 fn default_stt_mode() -> String {
-    "browser".to_string()
+    "local".to_string()
 }
 
 fn default_overlay_mode() -> String {
@@ -59,6 +107,18 @@ fn default_gateway_url() -> String {
     "ws://127.0.0.1:9009".to_string()
 }
 
+fn default_llm_provider() -> String {
+    "openai".to_string()
+}
+
+fn default_llm_endpoint() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_llm_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
@@ -66,15 +126,26 @@ impl Default for DaemonConfig {
             active_model: "ggml-base.bin".to_string(),
             engine_mode: "hybrid".to_string(),
             hotkey: "Ctrl+Shift+Z".to_string(),
-            unload_timeout: 5,
+            hotkey_mode: default_hotkey_mode(),
+            unload_timeout: 300,
             models_dir: String::new(),
-            stt_mode: "browser".to_string(),
-            overlay_mode: "cursor".to_string(),
-            gateway_url: "ws://127.0.0.1:9009".to_string(),
+            stt_mode: default_stt_mode(),
+            overlay_mode: default_overlay_mode(),
+            gateway_url: default_gateway_url(),
             translate_mode: "off".to_string(),
             history: Vec::new(),
             blacklist: Vec::new(),
             interactive_mode: false,
+            auto_submit: false,
+            auto_submit_key: default_auto_submit_key(),
+            append_trailing_space: false,
+            audio_feedback: true,
+            vad_silence_timeout: default_vad_silence_timeout(),
+            polish_mode: "off".to_string(),
+            llm_provider: default_llm_provider(),
+            llm_endpoint: default_llm_endpoint(),
+            llm_api_key: String::new(),
+            llm_model: default_llm_model(),
         }
     }
 }
@@ -157,6 +228,33 @@ pub fn resolve_models_dir() -> PathBuf {
     data_dir().join("models")
 }
 
+/// Check if a file is a valid GGML/GGUF model file
+pub fn is_valid_ggml_model(path: &std::path::Path) -> bool {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if meta.len() < 10_000_000 {
+        return false;
+    }
+
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut magic = [0u8; 4];
+    if file.read_exact(&mut magic).is_err() {
+        return false;
+    }
+
+    // "ggml" (0x67676d6c), "ggmf", "ggmv" in little-endian, or "GGUF"
+    magic == [0x6c, 0x6d, 0x67, 0x67]
+        || magic == [0x66, 0x6d, 0x67, 0x67]
+        || magic == [0x76, 0x6d, 0x67, 0x67]
+        || magic == *b"GGUF"
+}
+
 pub fn get_installed_models() -> Vec<InstalledModel> {
     let models_dir = resolve_models_dir();
     let cfg = get_config();
@@ -165,7 +263,11 @@ pub fn get_installed_models() -> Vec<InstalledModel> {
     if let Ok(entries) = std::fs::read_dir(&models_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("bin") {
+            let is_bin_or_gguf = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| ext == "bin" || ext == "gguf");
+            if is_bin_or_gguf && is_valid_ggml_model(&path) {
                 let filename = path.file_name().unwrap().to_string_lossy().to_string();
                 let meta = std::fs::metadata(&path).ok();
                 models.push(InstalledModel {
@@ -276,4 +378,41 @@ pub fn compute_usage_stats() -> UsageStats {
         avg_duration_secs,
         by_engine,
     }
+}
+
+pub fn start_remote_config_fetch() {
+    tokio::spawn(async move {
+        loop {
+            // Wait 10 minutes between checks
+            tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
+            
+            let url = {
+                let cfg = get_config();
+                let gateway = cfg.gateway_url.trim_end_matches('/');
+                // Replace ws:// with http://
+                let http_url = if gateway.starts_with("ws://") {
+                    gateway.replacen("ws://", "http://", 1)
+                } else if gateway.starts_with("wss://") {
+                    gateway.replacen("wss://", "https://", 1)
+                } else {
+                    gateway.to_string()
+                };
+                format!("{}/api/settings/remote", http_url)
+            };
+            
+            info!("fetching remote config from {}", url);
+            match reqwest::get(&url).await {
+                Ok(resp) => {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        // We could process remote config here (e.g. updating local settings limits)
+                        // For now we just log it
+                        info!("received remote config: {:?}", json);
+                    }
+                }
+                Err(e) => {
+                    warn!("failed to fetch remote config: {}", e);
+                }
+            }
+        }
+    });
 }

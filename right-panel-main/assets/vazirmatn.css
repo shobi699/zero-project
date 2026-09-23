@@ -1,0 +1,12 @@
+/* Vazirmatn Persian Font & RTL Baseline Styles */
+@font-face {
+  font-family: 'Vazirmatn';
+  src: local('Vazirmatn'), local('Vazirmatn RD'), local('Vazir'), local('Segoe UI Variable Text'), local('Segoe UI');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-persian: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', Tahoma, Arial, sans-serif;
+}

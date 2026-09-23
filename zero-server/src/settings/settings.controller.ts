@@ -17,6 +17,11 @@ export class SettingsController {
     return this.settingsService.getSettings();
   }
 
+  @Get('remote')
+  async getRemoteConfig() {
+    return this.settingsService.getRemoteConfig();
+  }
+
   @Get('providers')
   async getProviders() {
     return this.settingsService.getProviders();

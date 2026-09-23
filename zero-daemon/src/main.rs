@@ -16,6 +16,7 @@ mod protocol;
 mod router;
 mod tray;
 mod ws_client;
+mod watchdog;
 
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
@@ -35,10 +36,11 @@ use crate::injector::TextInjector;
 enum DaemonCmd {
     StartRecording,
     StopRecording,
-    ToggleRecording,
+    ToggleRecording { target_hwnd: Option<isize> },
     /// Record for the notepad — transcribed text is returned via the Sender
     /// instead of being injected at the OS cursor.
     RecordForNotepad(ipc::NotepadReplyTx),
+    ToggleWidget,
     /// Start continuous meeting recording (long recording mode)
     StartMeeting,
     /// Stop meeting recording and transcribe
@@ -58,6 +60,23 @@ enum DaemonEvent {
     Error(String),
 }
 
+pub fn play_audio_beep(start: bool) {
+    let cfg = config::get_config();
+    if cfg.audio_feedback {
+        unsafe {
+            if start {
+                let _ = windows::Win32::System::Diagnostics::Debug::MessageBeep(
+                    windows::Win32::UI::WindowsAndMessaging::MB_OK,
+                );
+            } else {
+                let _ = windows::Win32::System::Diagnostics::Debug::MessageBeep(
+                    windows::Win32::UI::WindowsAndMessaging::MB_ICONASTERISK,
+                );
+            }
+        }
+    }
+}
+
 fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -66,7 +85,27 @@ fn data_dir() -> PathBuf {
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    info!("zero-daemon starting");
+    
+    // Watchdog check with single-instance mutex
+    let args: Vec<String> = std::env::args().collect();
+    if !args.contains(&"--worker".to_string()) && !args.contains(&"--stt-bench".to_string()) {
+        unsafe {
+            use windows::core::w;
+            use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+            use windows::Win32::System::Threading::CreateMutexW;
+
+            let handle = CreateMutexW(None, true, w!("Local\\ZeroDaemonSingleInstanceMutex"));
+            if windows::Win32::Foundation::GetLastError() == ERROR_ALREADY_EXISTS {
+                info!("Another zero-daemon instance is already running. Exiting cleanly.");
+                return Ok(());
+            }
+            std::mem::forget(handle);
+        }
+        watchdog::run_watchdog();
+        return Ok(());
+    }
+
+    info!("zero-daemon worker starting");
 
     overlay::init_overlay();
     config::init_config();
@@ -116,6 +155,7 @@ fn main() -> Result<()> {
         rt.block_on(async {
             ipc_server_clone.start();
             local_engine::start_global_unload_watchdog();
+            config::start_remote_config_fetch();
             daemon_loop(cmd_rx, event_tx, hwnd_raw).await;
         });
     });
@@ -205,6 +245,7 @@ async fn daemon_loop(
     }
 
     let mut recording: Option<RecordingState> = None;
+    let mut browser_stt_active = false;
 
     loop {
         match cmd_rx.recv() {
@@ -235,7 +276,34 @@ async fn daemon_loop(
                 }
             }
             Ok(DaemonCmd::StartRecording) => {
-                if recording.is_none() {
+                let config = config::get_config();
+                if config.stt_mode == "browser" {
+                    if !browser_stt_active {
+                        info!("starting browser STT (PTT)");
+                        let snapshot = injector::take_destination_snapshot();
+                        if is_blacklisted(&snapshot.process_name) {
+                            warn!("Process {} is blacklisted. Ignoring recording.", snapshot.process_name);
+                            let _ = event_tx.send(DaemonEvent::Error("این برنامه در لیست سیاه است".into()));
+                            post_event(hwnd_raw);
+                            overlay::set_overlay_state(overlay::OverlayState::Error);
+                            tokio::spawn(async {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                                overlay::set_overlay_state(overlay::OverlayState::Hidden);
+                            });
+                            continue;
+                        }
+
+                        if let Some(mutex) = LAST_SNAPSHOT.get() {
+                            *mutex.lock().unwrap() = Some(snapshot);
+                        }
+
+                        browser_stt_active = true;
+                        play_audio_beep(true);
+                        if let Some(server) = ipc::get_ipc_server() {
+                            server.broadcast_start_browser_stt();
+                        }
+                    }
+                } else if recording.is_none() {
                     let snapshot = injector::take_destination_snapshot();
                     if is_blacklisted(&snapshot.process_name) {
                         warn!("Process {} is blacklisted. Ignoring recording.", snapshot.process_name);
@@ -253,6 +321,7 @@ async fn daemon_loop(
                     match start_recording(&tmp_dir, crypto.clone(), &event_tx, hwnd_raw, snapshot, None).await {
                         Ok(state) => {
                             recording = Some(state);
+                            play_audio_beep(true);
                             overlay::set_overlay_state(overlay::OverlayState::Listening);
                         }
                         Err(e) => {
@@ -270,17 +339,72 @@ async fn daemon_loop(
                 }
             }
             Ok(DaemonCmd::StopRecording) => {
-                if let Some(state) = recording.take() {
+                let config = config::get_config();
+                if config.stt_mode == "browser" {
+                    if browser_stt_active {
+                        info!("stopping browser STT (PTT)");
+                        browser_stt_active = false;
+                        play_audio_beep(false);
+                        if let Some(server) = ipc::get_ipc_server() {
+                            server.broadcast_stop_browser_stt();
+                        }
+                    }
+                } else if let Some(state) = recording.take() {
                     info!("stopping recording (PTT)");
+                    play_audio_beep(false);
                     stop_and_transcribe(state, &event_tx, hwnd_raw, &router).await;
                 }
             }
-            Ok(DaemonCmd::ToggleRecording) => {
-                if let Some(state) = recording.take() {
+            Ok(DaemonCmd::ToggleRecording { target_hwnd }) => {
+                let config = config::get_config();
+                if config.stt_mode == "browser" {
+                    if browser_stt_active {
+                        info!("stopping browser STT (Toggle)");
+                        browser_stt_active = false;
+                        play_audio_beep(false);
+                        if let Some(server) = ipc::get_ipc_server() {
+                            server.broadcast_stop_browser_stt();
+                        }
+                    } else {
+                        info!("starting browser STT (Toggle)");
+                        
+                        let snapshot = if let Some(h) = target_hwnd {
+                            if h != 0 { injector::take_destination_snapshot_for_hwnd(h) } else { injector::take_destination_snapshot() }
+                        } else {
+                            injector::take_destination_snapshot()
+                        };
+                        if is_blacklisted(&snapshot.process_name) {
+                            warn!("Process {} is blacklisted. Ignoring recording.", snapshot.process_name);
+                            let _ = event_tx.send(DaemonEvent::Error("این برنامه در لیست سیاه است".into()));
+                            post_event(hwnd_raw);
+                            overlay::set_overlay_state(overlay::OverlayState::Error);
+                            tokio::spawn(async {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                                overlay::set_overlay_state(overlay::OverlayState::Hidden);
+                            });
+                            continue;
+                        }
+
+                        if let Some(mutex) = LAST_SNAPSHOT.get() {
+                            *mutex.lock().unwrap() = Some(snapshot);
+                        }
+
+                        browser_stt_active = true;
+                        play_audio_beep(true);
+                        if let Some(server) = ipc::get_ipc_server() {
+                            server.broadcast_start_browser_stt();
+                        }
+                    }
+                } else if let Some(state) = recording.take() {
                     info!("stopping recording (Toggle)");
+                    play_audio_beep(false);
                     stop_and_transcribe(state, &event_tx, hwnd_raw, &router).await;
                 } else {
-                    let snapshot = injector::take_destination_snapshot();
+                    let snapshot = if let Some(h) = target_hwnd {
+                        if h != 0 { injector::take_destination_snapshot_for_hwnd(h) } else { injector::take_destination_snapshot() }
+                    } else {
+                        injector::take_destination_snapshot()
+                    };
                     if is_blacklisted(&snapshot.process_name) {
                         warn!("Process {} is blacklisted. Ignoring recording.", snapshot.process_name);
                         let _ = event_tx.send(DaemonEvent::Error("این برنامه در لیست سیاه است".into()));
@@ -297,6 +421,7 @@ async fn daemon_loop(
                     match start_recording(&tmp_dir, crypto.clone(), &event_tx, hwnd_raw, snapshot, None).await {
                         Ok(state) => {
                             recording = Some(state);
+                            play_audio_beep(true);
                             overlay::set_overlay_state(overlay::OverlayState::Listening);
                         }
                         Err(e) => {
@@ -311,6 +436,11 @@ async fn daemon_loop(
                             });
                         }
                     }
+                }
+            }
+            Ok(DaemonCmd::ToggleWidget) => {
+                if let Some(server) = ipc::get_ipc_server() {
+                    server.broadcast_toggle_widget();
                 }
             }
             Ok(DaemonCmd::RecordForNotepad(reply_tx)) => {
@@ -381,7 +511,7 @@ async fn daemon_loop(
                     let _ = reply_tx.send(String::new());
                 }
             }
-            Ok(DaemonCmd::Shutdown) | Err(_) => {
+            Err(_) => {
                 if let Some(state) = recording.take() {
                     state.capture.stop();
                     overlay::set_overlay_state(overlay::OverlayState::Hidden);
@@ -482,12 +612,66 @@ async fn start_recording(
 /// Translate text via server gateway (HTTP POST to /translation)
 async fn translate_text(text: &str, source_lang: &str, target_lang: &str) -> Result<String, anyhow::Error> {
     let cfg = crate::config::get_config();
+    let client = reqwest::Client::new();
+
+    // 1. Try OpenAI API if key is present
+    if !cfg.openai_api_key.trim().is_empty() {
+        let prompt = format!(
+            "You are a professional translator. Translate the following text from {} to {}. Output ONLY the translated text without extra quotes or notes:\n\n{}",
+            source_lang, target_lang, text
+        );
+
+        let res = client
+            .post("https://api.openai.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", cfg.openai_api_key.trim()))
+            .json(&serde_json::json!({
+                "model": "gpt-4o-mini",
+                "messages": [{ "role": "user", "content": prompt }],
+                "temperature": 0.3
+            }))
+            .timeout(std::time::Duration::from_secs(8))
+            .send()
+            .await;
+
+        if let Ok(resp) = res {
+            if resp.status().is_success() {
+                let data: serde_json::Value = resp.json().await?;
+                if let Some(content) = data["choices"][0]["message"]["content"].as_str() {
+                    let cleaned = content.trim().trim_matches('"').to_string();
+                    if !cleaned.is_empty() {
+                        return Ok(cleaned);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Try MyMemory Free Translation API (Zero Key, Instant HTTP)
+    let langpair = format!("{}|{}", source_lang, target_lang);
+    let mymemory_url = format!(
+        "https://api.mymemory.translated.net/get?q={}&langpair={}",
+        urlencoding::encode(text),
+        langpair
+    );
+
+    if let Ok(resp) = client.get(&mymemory_url).timeout(std::time::Duration::from_secs(5)).send().await {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                if let Some(translated) = data["responseData"]["translatedText"].as_str() {
+                    if !translated.trim().is_empty() && !translated.contains("MYMEMORY WARNING") {
+                        return Ok(translated.trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Fallback: Gateway Endpoint
     let base_url = cfg.gateway_url
         .replace("ws://", "http://")
         .replace("wss://", "https://");
     let url = format!("{}/translation", base_url);
 
-    let client = reqwest::Client::new();
     let resp = client.post(&url)
         .json(&serde_json::json!({
             "text": text,
@@ -553,6 +737,20 @@ async fn stop_and_transcribe(
                 if let Some(edited) = persian::apply_voice_commands(&text) {
                     info!(original = %text, edited = %edited, "voice command applied");
                     text = edited;
+                }
+
+                // Apply LLM Polish if enabled
+                let cfg = crate::config::get_config();
+                if cfg.polish_mode != "off" {
+                    match polish_text(&text, &cfg.polish_mode).await {
+                        Ok(polished) => {
+                            info!(original = %text, polished = %polished, "polish successful");
+                            text = polished;
+                        }
+                        Err(e) => {
+                            warn!("polish failed: {}, using original text", e);
+                        }
+                    }
                 }
 
                 // Apply translation if mode is enabled
@@ -810,5 +1008,55 @@ fn post_event(hwnd_raw: isize) {
     unsafe {
         let hwnd = windows::Win32::Foundation::HWND(hwnd_raw);
         let _ = PostMessageW(hwnd, tray::WM_DAEMON_EVENT, WPARAM(0), LPARAM(0));
+    }
+}
+
+async fn polish_text(text: &str, mode: &str) -> Result<String> {
+    let cfg = crate::config::get_config();
+    
+    // Resolve the system prompt
+    let system_prompt = match mode {
+        "grammar" | "persian_clean_and_punctuate" => "شما یک ویراستار حرفه‌ای زبان فارسی هستید. متن زیر را از نظر نگارشی و املایی تصحیح کنید. فقط متن تصحیح شده را بدون هیچ توضیح اضافه‌ای برگردانید.",
+        "formal" | "persian_casual_to_formal" => "شما یک دستیار هوش مصنوعی هستید. متن زیر را به یک متن کاملا رسمی و اداری به زبان فارسی تبدیل کنید. فقط متن نهایی را بدون هیچ توضیح اضافه‌ای برگردانید.",
+        "informal" | "persian_formal_to_casual" => "شما یک دستیار هوش مصنوعی هستید. متن زیر را به یک متن دوستانه، محاوره‌ای و غیررسمی به زبان فارسی تبدیل کنید. فقط متن نهایی را بدون هیچ توضیح اضافه‌ای برگردانید.",
+        _ => mode, // Custom prompt text passed directly
+    };
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap_or_default();
+    let endpoint = cfg.llm_endpoint.trim_end_matches('/').replace("localhost", "127.0.0.1");
+    
+    // Most standard API providers (OpenAI, Groq, Ollama, LM Studio, OpenRouter) use /chat/completions
+    let url = if endpoint.ends_with("/chat/completions") {
+        endpoint.to_string()
+    } else {
+        format!("{}/chat/completions", endpoint)
+    };
+
+    let mut req = client.post(&url);
+    if !cfg.llm_api_key.trim().is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", cfg.llm_api_key.trim()));
+    }
+
+    let payload = serde_json::json!({
+        "model": cfg.llm_model.trim(),
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": text }
+        ],
+        "temperature": 0.3
+    });
+
+    let res = req.json(&payload).send().await?;
+    if !res.status().is_success() {
+        let err_text = res.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("LLM API Error: {}", err_text));
+    }
+
+    let data: serde_json::Value = res.json().await?;
+    if let Some(content) = data["choices"][0]["message"]["content"].as_str() {
+        let cleaned = content.trim().to_string();
+        Ok(cleaned)
+    } else {
+        Err(anyhow::anyhow!("Invalid response structure from LLM"))
     }
 }

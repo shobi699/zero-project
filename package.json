@@ -1,0 +1,9 @@
+{
+  "name": "zero-project",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "cargo test --workspace && npm --prefix zero-server run test",
+    "typecheck": "cargo clippy --workspace -- -D warnings && npm --prefix zero-server run build && npm --prefix zero-studio run typecheck"
+  }
+}

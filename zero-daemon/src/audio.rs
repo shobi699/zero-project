@@ -157,3 +157,46 @@ pub fn pcm_to_wav(pcm: &[u8]) -> Vec<u8> {
     wav.extend_from_slice(pcm);
     wav
 }
+
+/// Calculate the root-mean-square (RMS) energy level of 16-bit PCM audio.
+pub fn calculate_rms(pcm: &[u8]) -> f32 {
+    if pcm.len() < 2 {
+        return 0.0;
+    }
+    let mut sum = 0.0f64;
+    let count = pcm.len() / 2;
+    for chunk in pcm.chunks_exact(2) {
+        let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+        sum += sample * sample;
+    }
+    ((sum / count as f64).sqrt()) as f32
+}
+
+/// Check if the PCM audio is effectively silence (below energy threshold).
+/// Standard ambient microphone noise floor is typically 50-150 RMS.
+pub fn is_silence(pcm: &[u8], threshold: f32) -> bool {
+    calculate_rms(pcm) < threshold
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_rms_silence() {
+        let zero_pcm = vec![0u8; 3200];
+        assert_eq!(calculate_rms(&zero_pcm), 0.0);
+        assert!(is_silence(&zero_pcm, 100.0));
+    }
+
+    #[test]
+    fn test_calculate_rms_signal() {
+        let mut signal_pcm = Vec::new();
+        for _ in 0..1000 {
+            signal_pcm.extend_from_slice(&1000i16.to_le_bytes());
+        }
+        let rms = calculate_rms(&signal_pcm);
+        assert!((rms - 1000.0).abs() < 1.0);
+        assert!(!is_silence(&signal_pcm, 200.0));
+    }
+}

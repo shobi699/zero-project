@@ -3,7 +3,11 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   FileText, Plus, Mic, MicOff, Save, Trash2, Copy, Check,
   Search, Clock, AlertCircle, Pin, PinOff, Download, Tag, X,
+  Sparkles, Wand2, RefreshCw, Layers, Eye,
 } from 'lucide-react';
+import { normalizePersianText } from '../utils/persianNormalizer';
+import PlaceholderFillModal from './PlaceholderFillModal';
+import MarkdownPreviewModal from './MarkdownPreviewModal';
 
 interface Note {
   id: string;
@@ -25,7 +29,11 @@ function getSpeechRecognition(): any {
   return w.webkitSpeechRecognition || w.SpeechRecognition || null;
 }
 
-export default function Notepad() {
+interface NotepadProps {
+  onTransferToTTS?: (text: string) => void;
+}
+
+export default function Notepad({ onTransferToTTS }: NotepadProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
@@ -41,7 +49,18 @@ export default function Notepad() {
   const [lang, setLang] = useState('fa-IR');
   const [sttMode, setSttMode] = useState('browser');
   const [loading, setLoading] = useState(true);
+  const [showFillModal, setShowFillModal] = useState(false);
+  const [showMdPreview, setShowMdPreview] = useState(false);
+  const [normalizedFlash, setNormalizedFlash] = useState(false);
   const recognitionRef = useRef<any>(null);
+
+  const handleNormalize = () => {
+    if (!content) return;
+    const cleaned = normalizePersianText(content);
+    setContent(cleaned);
+    setNormalizedFlash(true);
+    setTimeout(() => setNormalizedFlash(false), 2000);
+  };
 
   const loadNotes = useCallback(async () => {
     try {
@@ -213,7 +232,7 @@ export default function Notepad() {
       rec.lang = lang;
       rec.continuous = true;
       rec.interimResults = true;
-      rec.onresult = (event: SpeechRecognitionEvent) => {
+      rec.onresult = (event: any) => {
         let interim = '';
         let finalText = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -406,13 +425,26 @@ export default function Notepad() {
                 </div>
               )}
 
-              <div className="relative flex-1 min-h-[200px]">
+              <div className="relative flex-1 min-h-[200px] flex flex-col">
                 <textarea
                   placeholder="متن یادداشت را اینجا بنویسید یا دکمه میکروفن را بزنید..."
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  className="w-full h-full min-h-[200px] bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 resize-none"
+                  className="w-full h-full min-h-[200px] bg-slate-950 border border-slate-800 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-lg px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 resize-none flex-1"
                 />
+
+                {/* Text Stats Counter Bar (PromptPad Style) */}
+                <div className="flex items-center justify-between text-[10px] text-slate-500 px-3 py-1 bg-slate-950/80 border-x border-b border-slate-800/80 rounded-b-lg">
+                  <span>کاراکترها: {content.length} | کلمات: {content.trim() ? content.trim().split(/\s+/).length : 0} | خطوط: {content ? content.split('\n').length : 0}</span>
+                  {/[\[\{]/.test(content) && (
+                    <button
+                      onClick={() => setShowFillModal(true)}
+                      className="text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" /> فیلدهای جای‌خالی کشف شد! کلیک کنید
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Toolbar */}
@@ -427,6 +459,33 @@ export default function Notepad() {
                 >
                   {isListening ? <><MicOff className="w-3.5 h-3.5" /> توقف</> : <><Mic className="w-3.5 h-3.5 text-blue-400" /> تایپ صوتی</>}
                 </button>
+
+                <button
+                  onClick={handleNormalize}
+                  className="bg-slate-950 border border-teal-500/30 hover:border-teal-500/60 text-teal-400 hover:bg-teal-500/10 py-2 px-3 rounded-lg transition flex items-center gap-1.5 text-xs font-semibold"
+                  title="اصلاح کلمات ی/ک، نیم‌فاصله‌ها و خطوط تکراری"
+                >
+                  {normalizedFlash ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Wand2 className="w-3.5 h-3.5" />}
+                  {normalizedFlash ? 'اصلاح شد!' : 'پاکسازی و نیم‌فاصله'}
+                </button>
+
+                <button
+                  onClick={() => setShowFillModal(true)}
+                  className="bg-slate-950 border border-amber-500/30 hover:border-amber-500/60 text-amber-400 hover:bg-amber-500/10 py-2 px-3 rounded-lg transition flex items-center gap-1.5 text-xs font-semibold"
+                  title="پرکردن خودکار جای‌خالی‌های [...]"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> پرکردن جای‌خالی
+                </button>
+
+                {onTransferToTTS && (
+                  <button
+                    onClick={() => onTransferToTTS(content)}
+                    className="bg-indigo-500/10 border border-indigo-500/30 hover:bg-indigo-500/20 text-indigo-400 py-2 px-3 rounded-lg transition flex items-center gap-1.5 text-xs font-semibold ml-auto"
+                    title="انتقال به پنل آواساز هوشمند"
+                  >
+                    <Mic className="w-3.5 h-3.5" /> تبدیل به صوت
+                  </button>
+                )}
 
                 {recordError && (
                   <span className="text-[11px] text-rose-400 flex items-center gap-1 max-w-xs">
@@ -458,6 +517,14 @@ export default function Notepad() {
                 </button>
 
                 <button
+                  onClick={() => setShowMdPreview(true)}
+                  className="bg-slate-950 border border-purple-500/30 hover:border-purple-500/60 text-purple-400 hover:bg-purple-500/10 py-2 px-3 rounded-lg transition flex items-center gap-1.5 text-xs font-semibold"
+                  title="پیش‌نمایش زنده مارک‌داون"
+                >
+                  <Eye className="w-3.5 h-3.5" /> پیش‌نمایش
+                </button>
+
+                <button
                   onClick={saveCurrentNote}
                   className="bg-blue-600 hover:bg-blue-500 text-white py-2 px-3 rounded-lg flex items-center gap-1.5 text-xs font-bold transition"
                 >
@@ -483,6 +550,23 @@ export default function Notepad() {
           )}
         </div>
       </div>
+
+      {showFillModal && (
+        <PlaceholderFillModal
+          templateText={content}
+          onClose={() => setShowFillModal(false)}
+          onApply={(filledText) => setContent(filledText)}
+        />
+      )}
+
+      {showMdPreview && (
+        <MarkdownPreviewModal
+          content={content}
+          title={title ? `پیش‌نمایش: ${title}` : 'پیش‌نمایش زنده مارک‌داون'}
+          onClose={() => setShowMdPreview(false)}
+          onUpdateContent={(updated) => setContent(updated)}
+        />
+      )}
     </div>
   );
 }

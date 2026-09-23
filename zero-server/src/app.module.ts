@@ -6,6 +6,8 @@ import { AuthModule } from './auth/auth.module';
 import { QuotaModule } from './quota/quota.module';
 import { SttModule } from './stt/stt.module';
 import { TranslationModule } from './translation/translation.module';
+import { TtsModule } from './tts/tts.module';
+import { LlmModule } from './llm/llm.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { TranslationModule } from './translation/translation.module';
     QuotaModule,
     SttModule,
     TranslationModule,
+    TtsModule,
+    LlmModule,
   ],
 })
 export class AppModule {}

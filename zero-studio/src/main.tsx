@@ -5,7 +5,12 @@ import App from './App'
 import InteractivePreview from './components/InteractivePreview'
 import './index.css'
 
-const windowLabel = getCurrentWindow().label;
+let windowLabel = 'main';
+try {
+  windowLabel = getCurrentWindow().label;
+} catch {
+  // Fallback for non-Tauri webview environments
+}
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

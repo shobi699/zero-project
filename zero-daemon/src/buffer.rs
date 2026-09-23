@@ -67,13 +67,31 @@ pub fn recover_temp_files(tmp_dir: &Path, crypto: &AudioCrypto) -> Vec<(PathBuf,
             continue;
         }
 
+        let mut is_stale = false;
+        if let Ok(metadata) = entry.metadata() {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(elapsed) = modified.elapsed() {
+                    if elapsed.as_secs() > 24 * 3600 {
+                        is_stale = true;
+                    }
+                }
+            }
+        }
+
+        if is_stale {
+            tracing::warn!(path = %path.display(), "deleting stale temp file older than 24h");
+            let _ = fs::remove_file(&path);
+            continue;
+        }
+
         match read_encrypted_file(&path, crypto) {
             Ok(pcm) => {
                 info!(path = %path.display(), bytes = pcm.len(), "recovered temp file");
                 recovered.push((path, pcm));
             }
             Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "failed to recover temp file");
+                tracing::warn!(path = %path.display(), error = %e, "deleting corrupted temp file");
+                let _ = fs::remove_file(&path);
             }
         }
     }
@@ -101,4 +119,29 @@ fn read_encrypted_file(path: &Path, crypto: &AudioCrypto) -> Result<Vec<u8>> {
     }
 
     Ok(pcm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_recover_corrupted_file_deletes_it() {
+        let dir = tempdir().unwrap();
+        let crypto = AudioCrypto::load_or_create(dir.path()).unwrap();
+        
+        let file_path = dir.path().join("corrupted.enc");
+        // write a 4-byte length (e.g. 16) followed by 16 bytes of garbage
+        let mut data = vec![16, 0, 0, 0];
+        data.extend_from_slice(&[0u8; 16]);
+        fs::write(&file_path, &data).unwrap();
+        
+        assert!(file_path.exists());
+        
+        let recovered = recover_temp_files(dir.path(), &crypto);
+        
+        assert!(recovered.is_empty());
+        assert!(!file_path.exists(), "Corrupted file should have been deleted");
+    }
 }

@@ -17,5 +17,8 @@ export default defineConfig({
     target: process.platform === 'android' ? 'chrome105' : 'es2022',
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
+  },
+  test: {
+    environment: 'jsdom',
   }
 })

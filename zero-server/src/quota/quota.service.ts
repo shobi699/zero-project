@@ -10,6 +10,7 @@ export class QuotaService implements OnModuleInit, OnModuleDestroy {
   
   // In-memory fallback if Redis is not running
   private fallbackCache = new Map<string, number>();
+  private subLimitCache = new Map<string, { value: number; expiresAt: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -54,17 +55,44 @@ export class QuotaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getLimit(userId: string): Promise<number> {
+    const cacheKey = `user:sub:${userId}`;
+    const ttlSeconds = 300; // 5 minutes
+    const now = Date.now();
+
+    if (this.redis) {
+      try {
+        const cached = await this.redis.get(cacheKey);
+        if (cached) return Number(cached);
+      } catch (err: any) {
+        this.logger.warn(`Redis get failed for limit: ${err.message}`);
+      }
+    } else {
+      const cached = this.subLimitCache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        return cached.value;
+      }
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
 
+    let limit = await this.settingsService.getSettingValue<number>('quota.free.monthly_limit_sec', 1800);
     if (user && user.subscription === 'smart') {
-      // Premium user has unlimited or very high quota (e.g. 24 hours = 86400 seconds)
-      return 86400; 
+      limit = 86400; 
     }
 
-    // Default limit in seconds (30 minutes = 1800 seconds)
-    return this.settingsService.getSettingValue<number>('quota.free.monthly_limit_sec', 1800);
+    if (this.redis) {
+      try {
+        await this.redis.set(cacheKey, limit, 'EX', ttlSeconds);
+      } catch (err: any) {
+        this.logger.warn(`Redis set failed for limit: ${err.message}`);
+      }
+    } else {
+      this.subLimitCache.set(cacheKey, { value: limit, expiresAt: now + (ttlSeconds * 1000) });
+    }
+
+    return limit;
   }
 
   async getUsed(userId: string): Promise<number> {

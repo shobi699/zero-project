@@ -1,0 +1,140 @@
+name: Build & release
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$ver" installer\right-panel.iss
+      - name: Portable exe + zip
+        shell: pwsh
+        run: |
+          Copy-Item target\release\right-panel.exe dist\RightPanel-portable.exe
+          New-Item -ItemType Directory -Force pkg\RightPanel | Out-Null
+          Copy-Item target\release\right-panel.exe pkg\RightPanel\RightPanel.exe
+          Copy-Item README.md, LICENSE pkg\RightPanel\
+          Compress-Archive -Path pkg\RightPanel -DestinationPath dist\RightPanel-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: dist/* }
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libx11-dev libxdo-dev libayatana-appindicator3-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Package (.tar.gz + .deb)
+        run: |
+          set -e
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          mkdir -p dist pkg/right-panel
+          cp target/release/right-panel assets/icon.png README.md LICENSE pkg/right-panel/
+          tar -C pkg -czf dist/RightPanel-linux-x64.tar.gz right-panel
+          D=deb/right-panel_${VER}_amd64
+          mkdir -p $D/DEBIAN $D/usr/bin $D/usr/share/applications $D/usr/share/icons/hicolor/256x256/apps
+          cp target/release/right-panel $D/usr/bin/
+          cp assets/icon.png $D/usr/share/icons/hicolor/256x256/apps/right-panel.png
+          printf '[Desktop Entry]\nType=Application\nName=Right Panel\nComment=Liquid side panel for your screen edge\nExec=right-panel\nIcon=right-panel\nCategories=Utility;\n' > $D/usr/share/applications/right-panel.desktop
+          printf 'Package: right-panel\nVersion: %s\nArchitecture: amd64\nMaintainer: raminturne\nDepends: libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3\nRecommends: libayatana-appindicator3-1, playerctl, pulseaudio-utils, zenity\nDescription: Right Panel - a liquid side panel for your screen edge (beta)\n' "$VER" > $D/DEBIAN/control
+          dpkg-deb --build --root-owner-group $D dist/RightPanel-linux-amd64.deb
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: dist/* }
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, arch: arm64 }
+          - { target: x86_64-apple-darwin, arch: x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "${{ matrix.target }}" }
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: App bundle + dmg
+        run: |
+          set -e
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          APP="dist/Right Panel.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/${{ matrix.target }}/release/right-panel "$APP/Contents/MacOS/right-panel"
+          mkdir icon.iconset
+          for s in 16 32 128 256; do
+            sips -z $s $s assets/icon.png --out icon.iconset/icon_${s}x${s}.png >/dev/null
+            sips -z $((s*2)) $((s*2)) assets/icon.png --out icon.iconset/icon_${s}x${s}@2x.png >/dev/null
+          done
+          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/icon.icns"
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Right Panel</string>
+            <key>CFBundleDisplayName</key><string>Right Panel</string>
+            <key>CFBundleIdentifier</key><string>app.rightpanel</string>
+            <key>CFBundleExecutable</key><string>right-panel</string>
+            <key>CFBundleIconFile</key><string>icon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          EOF
+          codesign --force --deep -s - "$APP"
+          ln -s /Applications dist/Applications
+          hdiutil create -volname "Right Panel" -srcfolder dist -ov -format UDZO "RightPanel-macos-${{ matrix.arch }}.dmg"
+          ditto -c -k --keepParent "$APP" "RightPanel-macos-${{ matrix.arch }}.zip"
+          mkdir out && mv RightPanel-macos-* out/
+      - uses: actions/upload-artifact@v4
+        with: { name: "macos-${{ matrix.arch }}", path: out/* }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Right Panel ${{ github.ref_name }}
+          body_path: .github/RELEASE_NOTES.md
+          files: artifacts/*
+      - name: Put the new version on the README download buttons
+        run: |
+          set -e
+          git fetch origin main && git checkout main
+          sed -i -E "s/%20v[0-9]+\.[0-9]+\.[0-9]+-/%20${{ github.ref_name }}-/g" README.md
+          if ! git diff --quiet README.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -qam "README: download buttons now say ${{ github.ref_name }}"
+            git push
+          fi

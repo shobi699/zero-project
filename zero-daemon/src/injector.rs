@@ -19,6 +19,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+    GetWindow, GW_HWNDNEXT, IsWindowVisible,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_UNICODE, KEYEVENTF_KEYUP, VIRTUAL_KEY,
@@ -106,6 +107,13 @@ impl TextInjector {
     }
 
     pub async fn inject(&self, text: &str, snapshot: &DestinationSnapshot) -> InjectionStrategy {
+        let cfg = crate::config::get_config();
+        let mut final_text = text.to_string();
+
+        if cfg.append_trailing_space && !final_text.ends_with(' ') {
+            final_text.push(' ');
+        }
+
         info!(
             hwnd = snapshot.hwnd,
             process = %snapshot.process_name,
@@ -113,6 +121,19 @@ impl TextInjector {
             "starting text injection cascade"
         );
 
+        let strategy = self.perform_injection(&final_text, snapshot).await;
+
+        // Auto-submit key simulation if enabled in config
+        if cfg.auto_submit && strategy != InjectionStrategy::ClipboardOnly {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            let is_ctrl = cfg.auto_submit_key == "ctrl_enter";
+            send_auto_submit_key(is_ctrl);
+        }
+
+        strategy
+    }
+
+    async fn perform_injection(&self, text: &str, snapshot: &DestinationSnapshot) -> InjectionStrategy {
         // Cascade Strategy:
         // 1. Check window validity
         if !self.low_level.is_window_valid(snapshot.hwnd) {
@@ -121,20 +142,20 @@ impl TextInjector {
             return InjectionStrategy::ClipboardOnly;
         }
 
-        // 2. Fallback to ClipboardOnly if snapshot was not editable
+        // 2. Ensure target window has focus FIRST before any injection attempt
+        let current_fg = self.low_level.get_foreground_window();
+        if current_fg != snapshot.hwnd {
+            info!("restoring focus to snapshot window ({})", snapshot.hwnd);
+            if let Err(e) = self.low_level.focus_window(snapshot.hwnd).await {
+                warn!("failed to restore focus: {}. continuing anyway", e);
+            }
+        }
+
+        // 3. Fallback to ClipboardOnly if snapshot was not editable
         if !snapshot.is_editable {
             info!("snapshot target is not editable. falling back to ClipboardOnly");
             let _ = self.low_level.try_clipboard_paste(text).await;
             return InjectionStrategy::ClipboardOnly;
-        }
-
-        // 3. Ensure target window has focus
-        let current_fg = self.low_level.get_foreground_window();
-        if current_fg != snapshot.hwnd {
-            info!("restoring focus to snapshot window");
-            if let Err(e) = self.low_level.focus_window(snapshot.hwnd).await {
-                warn!("failed to restore focus: {}. continuing anyway", e);
-            }
         }
 
         // 4. Strategy 1: UI Automation
@@ -326,28 +347,61 @@ impl LowLevelInjector for Win32LowLevelInjector {
 
 // Take a snapshot of the destination window and focused element
 pub fn take_destination_snapshot() -> DestinationSnapshot {
+    take_destination_snapshot_for_hwnd(0)
+}
+
+pub fn take_destination_snapshot_for_hwnd(target_hwnd: isize) -> DestinationSnapshot {
     unsafe {
         // Use the MTA so the captured IUIAutomationElement can be used later
-        // from a tokio worker thread (which also joins the MTA). We keep the
-        // apartment initialized on this thread for the process lifetime rather
-        // than tearing it down while a live element pointer escapes.
+        // from a tokio worker thread (which also joins the MTA).
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-        let hwnd = GetForegroundWindow();
+        let mut hwnd = if target_hwnd != 0 && IsWindow(HWND(target_hwnd)).as_bool() {
+            HWND(target_hwnd)
+        } else {
+            GetForegroundWindow()
+        };
+
         if hwnd.0 == 0 {
             return DestinationSnapshot::default();
         }
 
         let mut pid = 0;
         let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let process_name = get_process_name(pid);
+        let mut process_name = get_process_name(pid);
+
+        // If the captured window is zero-studio, zero-daemon, or right-panel,
+        // and target_hwnd was not explicitly given, automatically walk the Z-order
+        // to find the previous user application window (e.g. Notepad.exe)
+        if target_hwnd == 0 && (process_name == "zero-studio.exe" || process_name == "right-panel.exe" || process_name == "zero-daemon.exe") {
+            let mut next = GetWindow(hwnd, GW_HWNDNEXT);
+            while next.0 != 0 {
+                if IsWindowVisible(next).as_bool() {
+                    let mut next_pid = 0;
+                    let _ = GetWindowThreadProcessId(next, Some(&mut next_pid));
+                    let next_name = get_process_name(next_pid);
+                    if next_name != "zero-studio.exe" && next_name != "right-panel.exe" && next_name != "zero-daemon.exe" && !next_name.is_empty() && next_name != "unknown" {
+                        hwnd = next;
+                        process_name = next_name;
+                        break;
+                    }
+                }
+                next = GetWindow(next, GW_HWNDNEXT);
+            }
+        }
 
         // Fetch UI Automation element
         let mut uia_element = None;
         let mut is_editable = false;
 
         if let Ok(automation) = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
-            if let Ok(element) = automation.GetFocusedElement() {
+            let el_res = if hwnd == GetForegroundWindow() {
+                automation.GetFocusedElement()
+            } else {
+                automation.ElementFromHandle(hwnd)
+            };
+
+            if let Ok(element) = el_res {
                 // Check if element is editable
                 if let Ok(pattern_obj) = element.GetCurrentPattern(UIA_ValuePatternId) {
                     if let Ok(val_pattern) = pattern_obj.cast::<IUIAutomationValuePattern>() {
@@ -364,6 +418,12 @@ pub fn take_destination_snapshot() -> DestinationSnapshot {
 
                 uia_element = Some(SafeElement(std::mem::ManuallyDrop::new(element)));
             }
+        }
+
+        // Standard Windows text editors (Notepad, WordPad, code editors) are editable
+        let proc_lower = process_name.to_lowercase();
+        if !is_editable && (proc_lower.contains("notepad") || proc_lower.contains("wordpad") || proc_lower.contains("code") || proc_lower.contains("devenv")) {
+            is_editable = true;
         }
 
         DestinationSnapshot {
@@ -397,6 +457,73 @@ fn get_process_name(pid: u32) -> String {
             }
         }
         "unknown".to_string()
+    }
+}
+
+/// Simulate pressing Enter or Ctrl+Enter key
+pub fn send_auto_submit_key(ctrl_enter: bool) {
+    unsafe {
+        if ctrl_enter {
+            let mut inputs = [INPUT::default(); 4];
+            // Ctrl down
+            inputs[0].r#type = INPUT_KEYBOARD;
+            inputs[0].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x11), // VK_CONTROL
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            // Enter down
+            inputs[1].r#type = INPUT_KEYBOARD;
+            inputs[1].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x0D), // VK_RETURN
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            // Enter up
+            inputs[2].r#type = INPUT_KEYBOARD;
+            inputs[2].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x0D),
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            // Ctrl up
+            inputs[3].r#type = INPUT_KEYBOARD;
+            inputs[3].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x11),
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        } else {
+            let mut inputs = [INPUT::default(); 2];
+            // Enter down
+            inputs[0].r#type = INPUT_KEYBOARD;
+            inputs[0].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x0D), // VK_RETURN
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            // Enter up
+            inputs[1].r#type = INPUT_KEYBOARD;
+            inputs[1].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0x0D),
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        }
     }
 }
 

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "zero-daemon",
     "tools/stt-bench",
+    "right-panel-main",
 ]
 # zero-studio/src-tauri is intentionally NOT a workspace member (see CLAUDE.md):
 # Tauri manages its own cargo build.

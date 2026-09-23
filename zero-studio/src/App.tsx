@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { register, unregister, isRegistered } from '@tauri-apps/plugin-global-shortcut';
 import { Mic, Settings as SettingsIcon, History as HistoryIcon, FileText, ShieldAlert, LogOut, Trash2, Video, BarChart3, BookOpen } from 'lucide-react';
+import { initializeRTL } from './lib/rtl';
 
 import Onboarding from './components/Onboarding';
 import Settings from './components/Settings';
@@ -12,48 +14,96 @@ import Blacklist from './components/Blacklist';
 import MeetingMode from './components/MeetingMode';
 import Stats from './components/Stats';
 import TextTools from './components/TextTools';
+import InteractivePreviewModal from './components/InteractivePreviewModal';
+import FloatingVoiceWidget from './components/FloatingVoiceWidget';
+import PreviewOverlay from './components/PreviewOverlay';
+import WidgetOverlay from './components/WidgetOverlay';
+import TTSPanel from './components/tts/TTSPanel';
+import { Sparkles as SparklesIcon, Mic as MicIcon } from 'lucide-react';
 
 export default function App() {
-  const [onboarded, setOnboarded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'settings' | 'history' | 'notepad' | 'blacklist' | 'meeting' | 'stats' | 'texttools'>('settings');
-  const [daemonStatus, setDaemonStatus] = useState<string>('Idle');
+  const urlParams = new URLSearchParams(window.location.search);
+  const windowParam = urlParams.get('window');
 
-  // Check onboarding status on mount
+  if (windowParam === 'preview' || windowParam === 'widget') {
+    document.body.style.setProperty('background-color', 'transparent', 'important');
+    document.documentElement.style.setProperty('background-color', 'transparent', 'important');
+  }
+
+  if (windowParam === 'preview') {
+    return <PreviewOverlay />;
+  }
+  if (windowParam === 'widget') {
+    return <WidgetOverlay />;
+  }
+
+  const [onboarded, setOnboarded] = useState(false);
+  const [activeTab, setActiveTab] = useState<'settings' | 'history' | 'notepad' | 'blacklist' | 'meeting' | 'stats' | 'texttools' | 'tts'>('tts');
+  const [daemonStatus, setDaemonStatus] = useState<string>('Idle');
+  const [previewData, setPreviewData] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [showFloatingWidget, setShowFloatingWidget] = useState(false);
+  const [widgetMousePos, setWidgetMousePos] = useState<{ x: number; y: number } | undefined>(undefined);
+  const [browserSttActive, setBrowserSttActive] = useState(false);
+
+  // Check onboarding status on mount & initialize RTL
   useEffect(() => {
+    initializeRTL('fa');
     const isCompleted = localStorage.getItem('zero_onboarded');
     if (isCompleted === 'true') {
       setOnboarded(true);
     }
     fetchDaemonStatus();
-    // Poll daemon status every 3 seconds
-    const interval = setInterval(fetchDaemonStatus, 3000);
-
-    // Listen for interactive preview requests
-    const unlistenPreview = listen('interactive-preview', (event: any) => {
-      const { text, x, y } = event.payload;
-      localStorage.setItem('zero_preview_text', text);
-      
-      const webview = new WebviewWindow('preview', {
-        url: '/',
-        title: 'Preview',
-        transparent: true,
-        decorations: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        width: 400,
-        height: 250,
-        x: x,
-        y: Math.max(0, y - 280) // Position above cursor
-      });
-
-      webview.once('tauri://error', function (e) {
-        console.error('Failed to create webview window:', e);
-      });
+    const unlistenStatus = listen<{ status: string }>('daemon-status-changed', (event) => {
+      setDaemonStatus(event.payload.status);
     });
 
+    const unlistenPreview = listen('interactive-preview', (event: any) => {
+      const { text, x, y } = event.payload || {};
+      if (text) {
+        setPreviewData({ text, x: x || 100, y: y || 100 });
+      }
+    });
+
+    const unlistenStartBrowserStt = listen('start-browser-stt', () => {
+      setShowFloatingWidget(true);
+      setBrowserSttActive(true);
+    });
+
+    const unlistenStopBrowserStt = listen('stop-browser-stt', () => {
+      setBrowserSttActive(false);
+    });
+
+    let registeredShortcut = 'Alt+V';
+    // Global Shortcut for Floating Voice Widget
+    const setupShortcut = async () => {
+      try {
+        const res = await invoke<any>('get_config');
+        if (res && res.config) {
+          const cfg = JSON.parse(res.config);
+          if (cfg.floating_hotkey) {
+            registeredShortcut = cfg.floating_hotkey;
+          }
+        }
+        
+        if (await isRegistered(registeredShortcut)) {
+          await unregister(registeredShortcut);
+        }
+        await register(registeredShortcut, async () => {
+          const { emit } = await import('@tauri-apps/api/event');
+          emit('toggle-widget');
+        });
+      } catch (err) {
+        console.error("Global shortcut error", err);
+      }
+    };
+    setupShortcut();
+
     return () => {
-      clearInterval(interval);
+      unlistenStatus.then(f => f());
       unlistenPreview.then(f => f());
+      unlistenStartBrowserStt.then(f => f());
+      unlistenStopBrowserStt.then(f => f());
+      unregister(registeredShortcut).catch(console.error);
     };
   }, [onboarded]);
 
@@ -127,6 +177,18 @@ export default function App() {
 
           {/* Nav Items */}
           <nav className="space-y-1">
+            <button
+              onClick={() => setActiveTab('tts')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
+                activeTab === 'tts'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/10'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-850'
+              }`}
+            >
+              <MicIcon className="w-4 h-4" />
+              آوا ساز هوشمند
+            </button>
+
             <button
               onClick={() => setActiveTab('settings')}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition ${
@@ -236,6 +298,19 @@ export default function App() {
               <Mic className="w-3.5 h-3.5 text-blue-400" />
               شبیه‌سازی ضبط (PTT)
             </button>
+
+            {/* Floating Voice Widget Launcher */}
+            <button
+              onClick={async () => {
+                const { emit } = await import('@tauri-apps/api/event');
+                emit('toggle-widget');
+              }}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition shadow-lg shadow-blue-500/20"
+              title="میانبر Alt + V"
+            >
+              <SparklesIcon className="w-3.5 h-3.5 text-amber-300" />
+              ویجت شناور تایپ صوتی (Alt+V)
+            </button>
           </div>
 
           {/* Delete All Data */}
@@ -270,11 +345,19 @@ export default function App() {
         <div className="max-w-4xl mx-auto">
           {activeTab === 'settings' && <Settings onSave={handleSaveSettings} />}
           {activeTab === 'history' && <History />}
-          {activeTab === 'notepad' && <Notepad />}
+          {activeTab === 'notepad' && (
+            <Notepad 
+              onTransferToTTS={(text) => {
+                localStorage.setItem('tts_initial_text', text);
+                setActiveTab('tts');
+              }}
+            />
+          )}
           {activeTab === 'blacklist' && <Blacklist />}
           {activeTab === 'meeting' && <MeetingMode />}
           {activeTab === 'stats' && <Stats />}
           {activeTab === 'texttools' && <TextTools />}
+          {activeTab === 'tts' && <TTSPanel />}
         </div>
       </main>
 

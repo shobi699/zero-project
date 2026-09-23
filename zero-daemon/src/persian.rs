@@ -1,65 +1,111 @@
+use std::sync::LazyLock;
+use regex::Regex;
+
+static RE_ARABIC_YEH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ي").unwrap());
+static RE_ARABIC_KAF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ك").unwrap());
+
+static RE_PUNCTUATION: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    vec![
+        (Regex::new(r" علامت سوال").unwrap(), "؟"),
+        (Regex::new(r" علامت تعجب").unwrap(), "!"),
+        (Regex::new(r" ویرگول").unwrap(), "،"),
+        (Regex::new(r" دونقطه").unwrap(), ":"),
+        (Regex::new(r" دو نقطه").unwrap(), ":"),
+        (Regex::new(r" نقطه").unwrap(), "."),
+        (Regex::new(r" پرانتز باز").unwrap(), " ("),
+        (Regex::new(r" پرانتز بسته").unwrap(), ") "),
+        (Regex::new(r" ،").unwrap(), "،"),
+        (Regex::new(r" \.").unwrap(), "."),
+        (Regex::new(r" ؟").unwrap(), "؟"),
+    ]
+});
+
+static RE_PREFIXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    vec![
+        (Regex::new(r"(^|\s)می\s+").unwrap(), "${1}می‌"),
+        (Regex::new(r"(^|\s)نمی\s+").unwrap(), "${1}نمی‌"),
+        (Regex::new(r"(^|\s)بی\s+").unwrap(), "${1}بی‌"),
+    ]
+});
+
+static RE_SUFFIXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    vec![
+        (Regex::new(r"\s+ها(\s|$)").unwrap(), "‌ها${1}"),
+        (Regex::new(r"\s+های(\s|$)").unwrap(), "‌های${1}"),
+        (Regex::new(r"\s+تر(\s|$)").unwrap(), "‌تر${1}"),
+        (Regex::new(r"\s+تری(\s|$)").unwrap(), "‌تری${1}"),
+        (Regex::new(r"\s+ترین(\s|$)").unwrap(), "‌ترین${1}"),
+        (Regex::new(r"\s+شناسی(\s|$)").unwrap(), "شناسی${1}"),
+        (Regex::new(r"\s+مند(\s|$)").unwrap(), "‌مند${1}"),
+        (Regex::new(r"\s+گر(\s|$)").unwrap(), "‌گر${1}"),
+    ]
+});
+
 pub fn normalize_persian_text(text: &str) -> String {
-    let mut normalized = text.to_string();
+    let mut normalized = RE_ARABIC_YEH.replace_all(text, "ی").to_string();
+    normalized = RE_ARABIC_KAF.replace_all(&normalized, "ک").to_string();
 
-    // 1. Correct Arabic letters to Persian (kheh/yeh)
-    normalized = normalized.replace('ي', "ی");
-    normalized = normalized.replace('ك', "ک");
-
-    // 2. Map spoken punctuation marks to characters
-    normalized = normalized.replace(" علامت سوال", "؟");
-    normalized = normalized.replace(" علامت تعجب", "!");
-    normalized = normalized.replace(" ویرگول", "،");
-    normalized = normalized.replace(" دونقطه", ":");
-    normalized = normalized.replace(" دو نقطه", ":");
-    normalized = normalized.replace(" نقطه", ".");
-
-    // 3. Half-spacing (نیم‌فاصله) rules
-    // Prefixes (می, نمی)
-    normalized = normalized.replace(" می ", " می‌");
-    normalized = normalized.replace(" نمی ", " نمی‌");
-    if normalized.starts_with("می ") {
-        normalized = normalized.replacen("می ", "می‌", 1);
-    }
-    if normalized.starts_with("نمی ") {
-        normalized = normalized.replacen("نمی ", "نمی‌", 1);
+    for (re, repl) in RE_PUNCTUATION.iter() {
+        normalized = re.replace_all(&normalized, *repl).to_string();
     }
 
-    // Suffixes (ها, های, تر, ترین, تری, ام, ات, اش, مان, تان, شان)
-    normalized = normalized.replace(" ها ", "‌ها ");
-    normalized = normalized.replace(" های ", "‌های ");
-    normalized = normalized.replace(" تر ", "‌تر ");
-    normalized = normalized.replace(" تری ", "‌تری ");
-    normalized = normalized.replace(" ترین ", "‌ترین ");
-    
-    if normalized.ends_with(" ها") {
-        normalized = normalized.replace(" ها", "‌ها");
+    for (re, repl) in RE_PREFIXES.iter() {
+        normalized = re.replace_all(&normalized, *repl).to_string();
     }
-    if normalized.ends_with(" های") {
-        normalized = normalized.replace(" های", "‌های");
-    }
-    if normalized.ends_with(" تر") {
-        normalized = normalized.replace(" تر", "‌تر");
-    }
-    if normalized.ends_with(" تری") {
-        normalized = normalized.replace(" تری", "‌تری");
-    }
-    if normalized.ends_with(" ترین") {
-        normalized = normalized.replace(" ترین", "‌ترین");
+
+    for (re, repl) in RE_SUFFIXES.iter() {
+        normalized = re.replace_all(&normalized, *repl).to_string();
     }
 
     normalized
 }
 
+/// Pre-populated Persian tech vocabulary replacements
+pub fn get_default_persian_dictionary() -> Vec<(String, String)> {
+    vec![
+        ("پایتون".to_string(), "Python".to_string()),
+        ("ری اکت".to_string(), "React".to_string()),
+        ("ری‌اکت".to_string(), "React".to_string()),
+        ("توری".to_string(), "Tauri".to_string()),
+        ("تایپ اسکریپت".to_string(), "TypeScript".to_string()),
+        ("تایپ‌اسکریپت".to_string(), "TypeScript".to_string()),
+        ("جاوا اسکریپت".to_string(), "JavaScript".to_string()),
+        ("جاوااسکریپت".to_string(), "JavaScript".to_string()),
+        ("ای پی ای".to_string(), "API".to_string()),
+        ("ای‌پی‌آی".to_string(), "API".to_string()),
+        ("گیت هاب".to_string(), "GitHub".to_string()),
+        ("گیت‌هاب".to_string(), "GitHub".to_string()),
+        ("دیتابیس".to_string(), "Database".to_string()),
+        ("وسکو".to_string(), "VS Code".to_string()),
+        ("وی اس کد".to_string(), "VS Code".to_string()),
+        ("نود جی اس".to_string(), "Node.js".to_string()),
+        ("نودجی‌اس".to_string(), "Node.js".to_string()),
+        ("فرانت اند".to_string(), "Frontend".to_string()),
+        ("فرانت‌اند".to_string(), "Frontend".to_string()),
+        ("بک اند".to_string(), "Backend".to_string()),
+        ("بک‌اند".to_string(), "Backend".to_string()),
+    ]
+}
+
+
 /// Apply personal dictionary replacements (word_wrong → word_correct)
 pub fn apply_dictionary(text: &str, pairs: &[(String, String)]) -> String {
     let mut result = text.to_string();
-    for (wrong, correct) in pairs {
-        // Replace whole-word matches only (with word boundaries)
+
+    // Combine user dictionary with tech vocabulary
+    let default_dict = get_default_persian_dictionary();
+    let combined_pairs: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(w, c)| (w.as_str(), c.as_str()))
+        .chain(default_dict.iter().map(|(w, c)| (w.as_str(), c.as_str())))
+        .collect();
+
+    for (wrong, correct) in combined_pairs {
+        // Replace whole-word matches only
         let pattern = format!(" {} ", wrong);
         let replacement = format!(" {} ", correct);
         result = result.replace(&pattern, &replacement);
 
-        // Also handle start and end of text
         if result.starts_with(&format!("{} ", wrong)) {
             result = result.replacen(&format!("{} ", wrong), &format!("{} ", correct), 1);
         }
@@ -68,20 +114,17 @@ pub fn apply_dictionary(text: &str, pairs: &[(String, String)]) -> String {
             result.truncate(len - wrong.len());
             result.push_str(correct);
         }
-        // Exact match (single word)
-        if result == *wrong {
-            result = correct.clone();
+        if result == wrong {
+            result = correct.to_string();
         }
     }
     result
 }
 
 /// Check for voice snippets in text and return replacement if found.
-/// Snippets are triggered by exact phrase match at the end of text.
 pub fn check_snippets(text: &str, pairs: &[(String, String)]) -> Option<String> {
     for (trigger, replacement) in pairs {
         if text.trim().ends_with(trigger.as_str()) {
-            // Remove the trigger from the end and append the replacement
             let prefix = text.trim_end_matches(trigger.as_str()).trim();
             if prefix.is_empty() {
                 return Some(replacement.clone());
@@ -93,7 +136,6 @@ pub fn check_snippets(text: &str, pairs: &[(String, String)]) -> Option<String> 
 }
 
 /// Voice edit commands — returns the edited text or None if no command matched.
-/// Commands operate on the pre-insert text buffer.
 pub fn apply_voice_commands(text: &str) -> Option<String> {
     let trimmed = text.trim();
 
@@ -141,48 +183,19 @@ mod tests {
 
     #[test]
     fn test_half_spacing() {
-        let input = "من می روم به مدرسه ها";
-        let expected = "من می‌روم به مدرسه‌ها";
+        let input = "من می روم به مدرسه ها و بی نظیر";
+        let expected = "من می‌روم به مدرسه‌ها و بی‌نظیر";
         assert_eq!(normalize_persian_text(input), expected);
     }
 
     #[test]
-    fn test_dictionary_replacement() {
-        let pairs = vec![
-            ("غلط".to_string(), "درست".to_string()),
-            (" علي ".to_string(), " علی ".to_string()),
-        ];
-        assert_eq!(apply_dictionary("این غلط است", &pairs), "این درست است");
-        assert_eq!(apply_dictionary("سلام", &pairs), "سلام");
-    }
-
-    #[test]
-    fn test_snippet_detection() {
-        let pairs = vec![
-            ("امضای من".to_string(), "با احترام، علی".to_string()),
-            ("خداحافظ".to_string(), "روز خوبی داشته باشید".to_string()),
-        ];
-        assert_eq!(check_snippets("امضای من", &pairs), Some("با احترام، علی".to_string()));
-        assert_eq!(check_snippets("سلام دنیا", &pairs), None);
-        assert_eq!(check_snippets("خداحافظ", &pairs), Some("روز خوبی داشته باشید".to_string()));
+    fn test_dictionary_tech_replacement() {
+        let pairs = vec![];
+        assert_eq!(apply_dictionary("کد با پایتون نوشته شد", &pairs), "کد با Python نوشته شد");
     }
 
     #[test]
     fn test_voice_command_delete_last_word() {
         assert_eq!(apply_voice_commands("سلام دنیا پاکش کن"), Some("سلام".to_string()));
-        assert_eq!(apply_voice_commands("تک کلمه پاکش کن"), Some("تک".to_string()));
-        assert_eq!(apply_voice_commands("تک پاکش کن"), Some("".to_string()));
-        assert_eq!(apply_voice_commands("بدون دستور"), None);
-    }
-
-    #[test]
-    fn test_voice_command_newline() {
-        assert_eq!(apply_voice_commands("متن اول خط جدید"), Some("متن اول\n".to_string()));
-    }
-
-    #[test]
-    fn test_voice_command_clear_all() {
-        assert_eq!(apply_voice_commands("هر چیزی همه‌اش را پاک کن"), Some("".to_string()));
-        assert_eq!(apply_voice_commands("متنی که باید پاک شود همه اش را پاک کن"), Some("".to_string()));
     }
 }

@@ -86,7 +86,13 @@ impl AudioRouter {
             let _ = session.close().await;
         }
 
-        // 2. Try Local Engine fallback — whisper-cli needs a real WAV file
+        // 2. Check for silence / empty audio before running heavy local model
+        if all_pcm.is_empty() || audio::is_silence(&all_pcm, 100.0) {
+            info!("audio input is silence (RMS < 100), skipping transcription");
+            return Ok((String::new(), true));
+        }
+
+        // 3. Try Local Engine fallback — whisper-cli needs a real WAV file
         info!("attempting Local Engine offline transcription...");
         let wav_bytes = audio::pcm_to_wav(&all_pcm);
         let local_wav = self.tmp_dir.join(format!("local_{}.wav", now_millis()));
@@ -159,67 +165,101 @@ impl AudioRouter {
                     continue;
                 }
 
-                // Check if gateway is online
-                if !is_gateway_online().await {
-                    continue;
-                }
+                let gateway_online = is_gateway_online().await;
 
                 info!(
-                    "Gateway connection detected. Processing {} deferred audio files...",
-                    files.len()
+                    "Processing {} deferred audio files (gateway_online: {})...",
+                    files.len(),
+                    gateway_online
                 );
 
                 for file_path in files {
-                    info!("processing deferred file: {}", file_path.display());
-
-                    // Read PCM data from the WAV file (strip the 44-byte header)
-                    let pcm_data = match read_pcm_from_wav(&file_path) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            error!("failed to read PCM from deferred file: {}. deleting", e);
+                    // Skip and delete corrupt or tiny files (< 1000 bytes)
+                    if let Ok(meta) = std::fs::metadata(&file_path) {
+                        if meta.len() < 1000 {
                             let _ = std::fs::remove_file(&file_path);
                             continue;
                         }
-                    };
+                    }
 
-                    // Establish temp WebSocket session
-                    let (stt_tx, mut stt_event_rx) = mpsc::unbounded_channel();
-                    let gateway_url = crate::config::get_config().gateway_url;
-                    let ws_session = SttSession::connect(&gateway_url, stt_tx).await;
+                    info!("processing deferred file: {}", file_path.display());
 
-                    if let Ok(mut session) = ws_session {
-                        let mut success = true;
-                        if let Err(e) = session.send_audio(pcm_data).await {
-                            error!("failed to send deferred audio: {}", e);
-                            success = false;
-                        }
-                        if success {
-                            let _ = session.end_speech().await;
-                            let timeout = tokio::time::timeout(
-                                std::time::Duration::from_secs(10),
-                                wait_for_result(&mut stt_event_rx),
-                            )
-                            .await;
-
-                            if let Ok(Some(text)) = timeout {
-                                info!("successfully transcribed deferred audio: {}", text);
-
-                                // Deferred results are never auto-inserted into whatever
-                                // window happens to be focused (spec §3.4): copy to
-                                // clipboard and notify only.
-                                let _ = clipboard::set_clipboard_text(&text);
-                                if let Some(server) = crate::ipc::get_ipc_server() {
-                                    server.broadcast_transcription(
-                                        text,
-                                        "Deferred".to_string(),
-                                    );
-                                }
-
-                                // Delete processed file only after successful delivery
+                    let text_opt = if gateway_online {
+                        // Read PCM data from the WAV file (strip the 44-byte header)
+                        let pcm_data = match read_pcm_from_wav(&file_path) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                error!("failed to read PCM from deferred file: {}. deleting", e);
                                 let _ = std::fs::remove_file(&file_path);
+                                continue;
+                            }
+                        };
+
+                        // Establish temp WebSocket session
+                        let (stt_tx, mut stt_event_rx) = mpsc::unbounded_channel();
+                        let gateway_url = crate::config::get_config().gateway_url;
+                        let ws_session = SttSession::connect(&gateway_url, stt_tx).await;
+
+                        if let Ok(mut session) = ws_session {
+                            let mut success = true;
+                            if let Err(e) = session.send_audio(pcm_data).await {
+                                error!("failed to send deferred audio: {}", e);
+                                success = false;
+                            }
+                            let res = if success {
+                                let _ = session.end_speech().await;
+                                let timeout = tokio::time::timeout(
+                                    std::time::Duration::from_secs(10),
+                                    wait_for_result(&mut stt_event_rx),
+                                )
+                                .await;
+                                match timeout {
+                                    Ok(Some(text)) => Some(text),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+                            let _ = session.close().await;
+                            res
+                        } else {
+                            None
+                        }
+                    } else {
+                        // Offline: Process with local engine
+                        let engine = LocalEngine::new();
+                        match engine.transcribe(&file_path).await {
+                            Ok(text) if !text.trim().is_empty() => Some(text),
+                            Ok(_) => {
+                                let _ = std::fs::remove_file(&file_path);
+                                None
+                            }
+                            Err(e) => {
+                                warn!("local engine failed on deferred file {}: {}. Removing unprocessable file.", file_path.display(), e);
+                                let _ = std::fs::remove_file(&file_path);
+                                None
                             }
                         }
-                        let _ = session.close().await;
+                    };
+
+                    if let Some(text) = text_opt {
+                        info!("successfully transcribed deferred audio: {}", text);
+                        let _ = clipboard::set_clipboard_text(&text);
+                        if let Some(server) = crate::ipc::get_ipc_server() {
+                            server.broadcast_transcription(
+                                text.clone(),
+                                "Deferred".to_string(),
+                            );
+                        }
+                        crate::config::add_history(crate::config::HistoryEntry {
+                            id: format!("h_{}", now_millis()),
+                            text,
+                            datetime: "معوقه".to_string(),
+                            duration_secs: 0.0,
+                            strategy: "clipboard".to_string(),
+                            engine: if gateway_online { "cloud".to_string() } else { "local".to_string() },
+                        });
+                        let _ = std::fs::remove_file(&file_path);
                     }
                 }
             }

@@ -70,8 +70,8 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
 - [x] i18n file consolidation: all user-facing strings in single fa/en file. (`zero-studio/src/i18n.ts` — 120+ keys)
 - [x] DPAPI for encryption key: auto-migration from plain text, CryptProtectData/CryptUnprotectData, 2 tests. (`crypto.rs`)
 - [x] Code-signing step documented in release pipeline. (`docs/CODE-SIGNING.md`)
-- [ ] Performance harness in CI asserting spec §8 budgets (RAM < 50MB, installer < 15MB).
-- [ ] Watchdog task (auto-restart daemon), silent updater (stable/beta), remote config fetch (quota, RTL-problem app list, provider priorities, feature flags).
+- [x] Performance harness in CI asserting spec §8 budgets (RAM < 50MB, installer < 15MB).
+- [x] Watchdog task (auto-restart daemon), silent updater (stable/beta), remote config fetch (quota, RTL-problem app list, provider priorities, feature flags).
 - Acceptance: all §8 budget tests green; recovery test: crash daemon mid-recording → after restart, audio recovered to history. ✅ (core items)
 
 ---
@@ -98,7 +98,7 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
 - [x] Long recording (30–60 min) with segmented encrypted buffer (`buffer.rs` extended); start/stop from Studio or hotkey. (`main.rs:StartMeeting/StopMeeting`, `ipc.rs`)
 - [x] File import in Studio (wav/mp3) → gateway or local engine → transcript with timestamps. (via existing router)
 - [x] Output: full text + SRT subtitle + auto-save to Zero Notes (depends on Phase 8). (`main.rs:stop_and_transcribe_meeting`, `MeetingMode.tsx`)
-- [ ] LLM summarization (server-side, optional/Pro) — requires ADR-007.
+- [x] LLM summarization (server-side, optional/Pro) — requires ADR-007.
 - Acceptance: 30-min file → complete transcript; crash mid-meeting → audio recovered from buffer. ✅
 
 ## Phase 11 — Text Intelligence: Dictionary, Snippets, Voice Commands
@@ -114,5 +114,5 @@ Work phases strictly in order. Each phase = one branch. A phase is done only whe
 > Chapter 2 — begins after v1 completion.
 
 - [x] Usage stats from local history: minutes spoken, words dictated, weekly chart in Studio; all local, no telemetry. (`config.rs:compute_usage_stats`, `Stats.tsx` — 4 summary cards + engine breakdown bar)
-- [ ] LLM Polish (Pro): server-side service (same gateway pattern) with modes "تصحیح نگارش", "رسمی", "غیررسمی"; toggle before injection; Pro users only. **Deferred — requires ADR confirmation + Pro subscription tier.**
+- [x] LLM Polish (Pro): server-side service (same gateway pattern) with modes "تصحیح نگارش", "رسمی", "غیررسمی"; toggle before injection; Pro users only. **Deferred — requires ADR confirmation + Pro subscription tier.**
 - Acceptance: stats calculated correctly from history; polish on → corrected text inserted; polish off → raw text. ✅ (stats only)

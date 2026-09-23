@@ -76,6 +76,34 @@ export class SettingsService implements OnModuleInit {
     return this.prisma.setting.findMany();
   }
 
+  async getRemoteConfig() {
+    const settings = await this.prisma.setting.findMany({
+      where: {
+        isEnabled: true,
+      },
+    });
+    
+    const config: Record<string, any> = {};
+    for (const setting of settings) {
+      if (setting.type === 'number') {
+        config[setting.key] = Number(setting.value);
+      } else if (setting.type === 'boolean') {
+        config[setting.key] = setting.value === 'true';
+      } else {
+        config[setting.key] = setting.value;
+      }
+    }
+    
+    // Also include active STT providers priority list
+    const providers = await this.getProviders();
+    config['stt.providers'] = providers
+      .filter((p: any) => p.isEnabled)
+      .sort((a: any, b: any) => b.priority - a.priority)
+      .map((p: any) => p.name);
+
+    return config;
+  }
+
   async getSetting(key: string) {
     const setting = await this.prisma.setting.findUnique({ where: { key } });
     if (!setting) {
