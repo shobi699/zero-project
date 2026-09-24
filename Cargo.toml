@@ -10,3 +10,11 @@ members = [
 exclude = [
     "zero-studio/src-tauri",
 ]
+
+# Size-focused build for right-panel (moved from its own Cargo.toml, where
+# member profiles are ignored). `lto` and `panic` cannot be set per-package,
+# and a workspace-wide panic=abort would affect zero-daemon, so they are omitted.
+[profile.release.package.right-panel]
+opt-level = "z"
+codegen-units = 1
+strip = true

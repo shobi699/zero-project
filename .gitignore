@@ -33,3 +33,7 @@ tools/stt-bench/corpus/*.wav
 *.exe
 *.dll
 *.pdb
+
+# Portable release bundle (build output)
+Zero-Studio-Portable/
+Zero-Studio-Portable.zip
