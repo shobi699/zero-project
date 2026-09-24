@@ -201,11 +201,12 @@ fn spawn_edge_watch(proxy: EventLoopProxy<Ev>, scale: f64) {
         let mut last = (i32::MIN, i32::MIN);
         let mut held = 0u32;
         loop {
-            thread::sleep(Duration::from_millis(12));
             if OPEN.load(Ordering::Relaxed) || PICKING.load(Ordering::Relaxed) {
                 near = false;
+                thread::sleep(Duration::from_millis(60));
                 continue;
             }
+            thread::sleep(Duration::from_millis(12));
             let Some((px, py)) = sys::cursor_pos() else { continue };
             let (win_y, h, edge) = (PANEL_Y.load(Ordering::Relaxed), PANEL_H.load(Ordering::Relaxed), EDGE_X.load(Ordering::Relaxed));
             let left = ON_LEFT.load(Ordering::Relaxed);

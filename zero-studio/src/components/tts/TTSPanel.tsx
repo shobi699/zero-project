@@ -54,14 +54,22 @@ export default function TTSPanel() {
       const res = await fetch(`${API_BASE}/models`);
       if (res.ok) {
         const data = await res.json();
-        setModels(data.models || []);
-        if (data.models && data.models.length > 0) {
-          setSelectedModel(data.models[0]);
+        const available = data.models || [];
+        setModels(available);
+        if (available.length > 0) {
+          setSelectedModel(available[0]);
         }
+      } else {
+        // Fallback default voices
+        const defaults = ['fa_female_1', 'fa_male_1'];
+        setModels(defaults);
+        setSelectedModel(defaults[0]);
       }
-    } catch (e) {
-      console.error('Failed to fetch models:', e);
-      setError('ارتباط با سرور برقرار نشد. لطفاً مطمئن شوید سرور در حال اجراست.');
+    } catch {
+      // Quiet fallback when backend service is not running locally
+      const defaults = ['fa_female_1', 'fa_male_1'];
+      setModels(defaults);
+      setSelectedModel(defaults[0]);
     }
   };
 
