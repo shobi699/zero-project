@@ -727,7 +727,7 @@ mod tests {
     #[tokio::test]
     async fn test_uia_success() {
         let focused = Arc::new(StdMutex::new(None));
-        let mock_uia_element = unsafe { std::mem::transmute(0x12345678isize) };
+        let mock_uia_element = unsafe { std::mem::transmute::<isize, windows::Win32::UI::Accessibility::IUIAutomationElement>(0x12345678isize) };
         let mock = Arc::new(MockLowLevelInjector {
             window_valid: true,
             foreground_window: 100,
@@ -751,7 +751,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_input_fallback_on_uia_failure() {
         let focused = Arc::new(StdMutex::new(None));
-        let mock_uia_element = unsafe { std::mem::transmute(0x12345678isize) };
+        let mock_uia_element = unsafe { std::mem::transmute::<isize, windows::Win32::UI::Accessibility::IUIAutomationElement>(0x12345678isize) };
         let mock = Arc::new(MockLowLevelInjector {
             window_valid: true,
             foreground_window: 100,

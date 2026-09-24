@@ -496,7 +496,7 @@ pub fn pick_folder() -> Option<String> {
         let mut bi: BROWSEINFOW = std::mem::zeroed();
         bi.lpszTitle = title.as_ptr();
         bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-        let list = SHBrowseForFolderW(&mut bi);
+        let list = SHBrowseForFolderW(&bi);
         if list.is_null() {
             return None;
         }

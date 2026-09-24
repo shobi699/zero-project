@@ -478,7 +478,7 @@ async fn test_model_inference(model_id: String) -> Result<serde_json::Value, Str
     }
 
     let num_threads = std::thread::available_parallelism()
-        .map(|n| (n.get() / 2).max(4).min(8).to_string())
+        .map(|n| (n.get() / 2).clamp(4, 8).to_string())
         .unwrap_or_else(|_| "6".to_string());
 
     let output_res = tokio::time::timeout(
@@ -1037,7 +1037,7 @@ fn ensure_right_panel_started(app_handle: &tauri::AppHandle) -> bool {
 
     use tauri_plugin_shell::ShellExt;
     if let Ok(sidecar) = app_handle.shell().sidecar("right-panel") {
-        if let Ok(_) = sidecar.spawn() {
+        if sidecar.spawn().is_ok() {
             return true;
         }
     }
@@ -1172,7 +1172,7 @@ fn main() {
 fn ensure_daemon_started(app_handle: &tauri::AppHandle) {
     use tauri_plugin_shell::ShellExt;
     if let Ok(sidecar) = app_handle.shell().sidecar("zero-daemon") {
-        if let Ok(_) = sidecar.spawn() {
+        if sidecar.spawn().is_ok() {
             return;
         }
     }

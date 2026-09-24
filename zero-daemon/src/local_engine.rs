@@ -155,7 +155,7 @@ impl LocalEngine {
 
         // Dynamically compute optimal compute threads (between 4 and 8)
         let num_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() / 2).max(4).min(8).to_string())
+            .map(|n| (n.get() / 2).clamp(4, 8).to_string())
             .unwrap_or_else(|_| "6".to_string());
 
         let output_future = cmd

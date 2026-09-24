@@ -295,3 +295,17 @@
 - **انحراف از سند:** LLM Polish فعلاً پیاده نشده (نیاز به سرویس سمت سرور + ADR)
 - **مسائل باز:** ندارد
 
+
+## 2026-09-24 — Maintenance: clippy `-D warnings` gate restored
+
+Baseline: server 37/37 tests pass, Studio `tsc` clean; `cargo clippy -D warnings` failed in 3 crates (CI breaker).
+
+| File | Issue | Fix |
+|---|---|---|
+| zero-daemon/src/injector.rs (tests, ~730/754) | `missing_transmute_annotations` | explicit `transmute::<isize, IUIAutomationElement>` |
+| zero-daemon/src/local_engine.rs:158 | `manual_clamp` | `.clamp(4, 8)` |
+| zero-studio/src-tauri/src/main.rs:481, 1040, 1175 | `manual_clamp`, `redundant_pattern_matching` | `.clamp`, `.is_ok()` |
+| right-panel-main/src/main.rs:45-47, 112 | `type_complexity`, `collapsible_if` | `ClipImage` alias, let-chain |
+| right-panel-main/src/sys/windows.rs:499 | `unnecessary_mut_passed` | `&bi` |
+
+Verified: workspace + Tauri clippy exit 0, `cargo test --workspace` all pass, server tests pass.

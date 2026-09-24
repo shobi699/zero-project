@@ -42,9 +42,11 @@ static PANEL_H: AtomicI32 = AtomicI32::new(0);
 static EDGE_X: AtomicI32 = AtomicI32::new(0);
 static ON_LEFT: AtomicBool = AtomicBool::new(false);
 /// Recent clipboard images, newest last. Thumbnails go to the UI; the pixels stay here.
-static IMAGES: Mutex<Vec<(u64, u32, u32, Vec<u8>)>> = Mutex::new(Vec::new());
+/// (id, width, height, RGBA pixels)
+type ClipImage = (u64, u32, u32, Vec<u8>);
+static IMAGES: Mutex<Vec<ClipImage>> = Mutex::new(Vec::new());
 /// Pinned images are also kept on disk, so they come back after a restart.
-static PINNED: Mutex<Vec<(u64, u32, u32, Vec<u8>)>> = Mutex::new(Vec::new());
+static PINNED: Mutex<Vec<ClipImage>> = Mutex::new(Vec::new());
 static LAST_IMAGE: AtomicU64 = AtomicU64::new(0);
 
 enum Ev {
@@ -109,10 +111,10 @@ fn spawn_clip_watch(proxy: EventLoopProxy<Ev>) {
                         }
                     }
                     _ => {
-                        if let Some(script) = take_clip_image() {
-                            if proxy.send_event(Ev::Script(script)).is_err() {
-                                return;
-                            }
+                        if let Some(script) = take_clip_image()
+                            && proxy.send_event(Ev::Script(script)).is_err()
+                        {
+                            return;
                         }
                     }
                 }
